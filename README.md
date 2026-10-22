@@ -4,6 +4,12 @@
 
 This is a port of [dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet) (Apple's open-source XNU kernel, xnu-8796, on a Redmi Note 10 Pro) to the Xiaomi **Redmi Note 12 4G** (`topaz` / `tapas`, Qualcomm **SM6225 "khaje"** / Snapdragon 685). On top of it runs the **unmodified iOS 16.7.16 (20H392) userland of the iPhone X**: launchd, the system daemons, backboardd and SpringBoard.
 
+
+> **Thanks to HackiOS.** The GPU (Adreno through Mesa), display presentation, audio, Wi-Fi glue,
+> sandbox and tweak-injection work here started from [HackiOS](https://github.com/oosexgang/hackios-xnu-kernel)
+> by OOSEX GANG (kernel: APSL 2.0, [user space](https://github.com/oosexgang/hackios-xnu-userland): MIT).
+> What comes from it and under which licence: [CREDITS.md](CREDITS.md).
+
 As of **2026-10-20** the phone boots to the **iOS home screen** on the four Cortex-A73 cores, with **touch, volume and power keys**, and **Wi-Fi**: iOS Settings lists networks, joins WPA2 networks, remembers the password in the keychain and reconnects after a reboot; Safari loads pages over HTTPS. The modem and Wi-Fi firmware are booted by our own XNU driver straight from the phone's stock `modem_a` partition. Since **2026-10-22** the GPU work is here too: the Adreno 610 draws the whole UI through Mesa freedreno behind CoreAnimation's OpenGL ES renderer, with all eight cores (AMP), sound, charging, wallpapers, widgets and tweak injection (ElleKit). Much of it started from **HackiOS** (now open source, see [CREDITS.md](CREDITS.md)).
 
 > Experimental bring-up, not a usable phone OS. Many things are missing or stubbed, and Apple's security model is mostly switched off. It installs into the `userdata` partition and so **erases Android's user data**. Nothing is flashed to the boot partitions; the kernel is started from RAM with `fastboot boot`.
