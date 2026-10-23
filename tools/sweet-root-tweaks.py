@@ -229,12 +229,18 @@ def seed_mobileactivation(root_directory):
     internal_storage = os.path.join(activation_container, 'Library/internal')
     os.makedirs(internal_storage, exist_ok=True)
     try:
-        os.chown(internal_storage, MOBILE_UID, MOBILE_UID)
+        os.chown(internal_storage, 0, 0)
         os.chmod(internal_storage, 0o755)
     except PermissionError:
         pass
     
     ark_payload = {
+        'ActivationState': 'Activated',
+        'BrickState': False,
+        'BuildVersion': BUILD_VERSION,
+        'ProductVersion': PRODUCT_VERSION,
+        'DataMigrationCompleted': True,
+        'PreSydroDataMigrationCompleted': True,
         '-ActivationState': 'Activated',
         '-BrickState': False,
         '-BuildVersion': BUILD_VERSION,
@@ -242,7 +248,7 @@ def seed_mobileactivation(root_directory):
         '-DataMigrationCompleted': True,
         '-PreSydroDataMigrationCompleted': True,
     }
-    write_plist(os.path.join(internal_storage, 'data_ark.plist'), ark_payload, MOBILE_UID, MOBILE_UID, 0o600)
+    write_plist(os.path.join(internal_storage, 'data_ark.plist'), ark_payload, 0, 0, 0o644)
     print(f'data ark written to {internal_storage}')
 
 def configure_audio_stack(root_directory):

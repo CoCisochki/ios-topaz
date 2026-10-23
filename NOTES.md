@@ -1,26 +1,36 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Agent handoff / active work (2026-10-15, latest)
+## Agent handoff / active work (2026-10-23, latest)
 
-### >>> UPDATE 2026-10-23 milestone (topaz: UID 1000 fixed, mobileactivationd & lsd containers restored, sweetsample active) <<<
+### >>> UPDATE 2026-10-23 milestone (topaz: mobileactivationd data_ark key fix, full permissions/ownership sweep, ios16-root.simg ready) <<<
 
-- **Root Cause of Permission Denied (errno 13) & mobileactivationd Trap Solved:**
-  - `accountsd` and `profiled` are completely fixed by restoring `501:501` on `/private/var/mobile`.
-  - Disassembled `mobileactivationd` at `0x1001bf3bc` (`sub 0x102fa73bc`, line 321):
-    - Confirmed trap `brk #1` in `main` preceded by `Failed to perform boot initialization tasks.` / `Failed to create data ark.`
-    - Reason: `/private/var/containers/Data/System/com.apple.mobileactivationd` had been changed to 501:501 instead of root `0:0`.
-  - Container hierarchy cleanly fixed:
-    - Restored `/private/var/containers` and `/private/var/containers/Data/System/com.apple.mobileactivationd` to `0:0` (`root:wheel`).
-    - Removed handcrafted dummy directories in `Shared/SystemGroup/` (`systemgroup.com.apple.lsd`, `mobilegestaltcache`, `installcoordinationd`) which caused `containermanagerd` / `lsd` to hang during reseed. Retained only `systemgroup.com.apple.configurationprofiles` (with `chmod 777`).
-    - Verified `/private/var/mobile` ownership is `501:501` (`mobile:mobile`).
-  - Repacked fresh `ios16-root.simg` (SHA256: `e080bb23652a0fac87feca46af5d934ebf9ec642a609f8c252bb0024f371c1af`).
-- **Kernel Built & Downloaded with Patch 0953:**
-  - CI build `40001474448` succeeded: [Run 40001474448](https://github.com/CoCisochki/ios-topaz/actions/runs/40001474448).
-  - Downloaded to `xnu/out/kernel.development.sweet` (SHA256: `b74add3cacc093f80d58ed228169e45cae45554e115e4f9eab49b1112bb77647`).
-  - Contains dirty line comparison (skipping unchanged lines) and targeted `dc cvac` per 64-byte block, eliminating the 162,000 `dc cvac` bottleneck per frame.
-- **Diagnostic sweetsample Boot Image Ready:**
-  - Added `sweetsample=lsd,containermanagerd,installcoordinationd,pkd,SpringBoard` to cmdline.
-  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` (SHA256: `a122eaeb4ceedbbc3a2e51efb02f73c0650bc359f5e552f658ccf2016d137531`).
+- **Root Cause of mobileactivationd Crash (sig 5 / brk #1 at 0x1001bf3bc) Solved:**
+  - Disassembled `/usr/libexec/mobileactivationd` around `0x10001ad10` (`main` migration entry block `0x10001ac5c`):
+    - Reads `x21 = [data_ark objectForKey:@"BuildVersion"]` (offset `0x1002209d8`) and `x22 = MobileGestalt(@"BuildVersion")` (`"20H392"`).
+    - Checks `[x21 isEqualToString:x22]` at `0x10001ae34`.
+    - Previously, `tools/sweet-root-tweaks.py` wrote keys prefixed with hyphens (`'-BuildVersion'`, `'-ProductVersion'`, `'-ActivationState'`).
+    - Because of the hyphen, `[data_ark objectForKey:@"BuildVersion"]` returned `nil`, failing the comparison.
+    - `mobileactivationd` assumed an OS upgrade occurred (`"Upgrade from (null) to 20H392 detected"`), invoked `perform_data_migration` which failed, logged `"Migration failed."`, and hit `brk #1` at `0x1001bf3bc`.
+  - Fix applied: `seed_mobileactivation` in `tools/sweet-root-tweaks.py` now writes unhyphenated keys (`BuildVersion`, `ProductVersion`, `ActivationState`, `DataMigrationCompleted`, `PreSydroDataMigrationCompleted`) as well as compatibility keys with owner `0:0` (`root:wheel`) and mode `0644`.
+
+- **LaunchServices (lsd) Blocking Analysis:**
+  - `lsd t6` hung waiting for synchronous XPC reply from `mobileactivationd` (`-[MadGate copyActivationRecord:]` -> `initMAECopyActivationRecordWithError`). With `mobileactivationd` crash-looping, `lsd` never received a reply.
+  - `lsd t1` hung in `__GetEligiblePersonaForBundle` querying group containers from `containermanagerd`.
+  - Removed artificial dummy directories from `/private/var/containers/Shared/SystemGroup/`: `systemgroup.com.apple.lsd`, `mobilegestaltcache`, `installcoordinationd`. Retained only `systemgroup.com.apple.configurationprofiles` (`chmod 777`).
+
+- **Full Filesystem Ownerships & Permissions Sweep Applied via Sudo:**
+  - `/private/var/mobile` and subfolders (`Library`, `Accounts`, `Preferences`): `501:501` (`mobile:mobile`), `chmod 755` (`Caches` `777`).
+  - `/private/var/containers` and `Data/System/com.apple.mobileactivationd`: `0:0` (`root:wheel`), `chmod 755`.
+  - `/private/var/keybags`: `0:0`, `chmod 700`.
+  - `/private/var/run`: `0:0`, `chmod 775`.
+  - `/private/var/db`: `0:0`, `chmod 755`; `/private/var/db/lsd`: `501:501`, `chmod 755`.
+  - `/private/var/Keychains`: `0:0`, `chmod 755`.
+
+- **Artifacts Ready for Flashing & Boot:**
+  - `ios16-root.simg` (SHA256: `8d89032fbe4bfa3628e869e260e3f4290851e016b2b58a442673d35a5077bef4`).
+  - `shim/out/shim-boot.img` (SHA256: `71173a5c9cd1a323c24cd5327ec41959c18ef07401b84235ab3f1b956266c157`).
+    - Kernel contains Patch 0953 (dirty line framebuffer cache maintenance), Patch 0952 (topaz DWC3 USB), Patch 0951 (sandbox grant all).
+    - Boot-args: `sweetnull=mobileactivationd,lsd,usermanagerd,containermanagerd,profiled,accountsd,backboardd,SpringBoard sweetscan=mobileactivationd sweetsample=lsd,containermanagerd,installcoordinationd,pkd,SpringBoard`.
 
 ### >>> UPDATE 2026-10-23 FPS optimization (topaz: Patch 0953 dirty line framebuffer cache flush & skip unchanged lines) <<<
 
