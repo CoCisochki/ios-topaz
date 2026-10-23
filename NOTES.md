@@ -6,17 +6,16 @@
 
 - **Kernel update & Sandbox Hot-patch (Task 1 & 2):**
   - Synced kernel from CI run `39817478111` (commit `e477291`) containing patches up to 0950 (`kAKSWrapKey` / `kAKSUnwrapKey` sel 10/11 in SweetKeyStore).
-  - Applied binary hot-patch to `xnu/out/kernel.development.sweet` at file offset `0x7da640` (`_sweet_sandbox_priv_grant`): replaced prologue with `mov w0, #0; ret` (`00 00 80 52 c0 03 5f d6`), eliminating sandbox privilege denials for logd (1002), rapportd (12000), identityservicesd (12001), symptomsd (10003). Original saved as `kernel.development.sweet.orig`.
-  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` with the patched kernel and `mac-address-*` ADT properties.
-- **USB DWC3 patch for SM6225 (Task 1):**
-  - Created `xnu/patches/0952-topaz-dwc3-usb.patch` implementing SM6225 DWC3 (`0x04e00000`) and QSCRATCH (`0x04ef8800`), enabled via `sweetusb` boot-arg or `sweethw=2`.
-  - Created source patch `xnu/patches/0951-topaz-sandbox-grant-all-privileges.patch` for future CI kernel builds.
-- **Rootfs optimizations & Daemons (Task 3 & 4):**
+  - Applied source patches `0951-topaz-sandbox-grant-all-privileges.patch` and `0952-topaz-dwc3-usb.patch` (SM6225 DWC3 `0x04e00000`, QSCRATCH `0x04ef8800`), committed as `27d8d2b`.
+  - CI build run `39981613469` completed successfully with full Clang build; downloaded artifact `xnu-kernel` and installed clean `kernel.development.sweet` into `xnu/out/`.
+  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` (SHA256: `9aaead52a4f4528f12324055f778cfaecd5a762924202945460c5128d725eb45`).
+- **Rootfs optimizations & Images (Task 3 & 4):**
   - Mounted `ios16-root.img` rw, ran updated `tools/sweet-root-tweaks.py`.
   - Stripped 23 heavy / unnecessary daemons from `System/Library/xpc/launchd.plist` (including `com.apple.driverkitd` to stop crash loop, plus telemetry, Siri, Spotlight indexing, Duet, Watch services).
   - Preserved `/private/tmp`, `/private/var/tmp` (1777), `/private/var/db/lsd`, and `mobileactivationd` container data ark.
   - Verified LaunchServices database `/private/var/db/lsd/` and `/private/var/Keychains/` are clean for a fresh start with working Keychain.
   - Unmounted cleanly and verified image integrity with `fsck.hfsplus -fy ios16-root.img` (OK, 0 errors).
+  - Generated sparse image `ios16-root.simg` for flashing (SHA256: `f041c2a47ef22e1dd18b7f2f676ebed5500dd1823e3c463433c36bc0dbfe73f9`).
 - **Tooling:** Created `tools/sweet-inject-app.py` for injecting .app bundles and command binaries.
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
