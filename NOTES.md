@@ -2,6 +2,34 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-23 midnight (topaz: low FPS diagnosis, missing system apps fix, USB DWC3 kernel ready) <<<
+
+- **Root Cause & Diagnosis of Low FPS / Rendering Bottlenecks:**
+  - **Framebuffer & Surface Cache Attributes (Issue 1a):**
+    - Userland surfaces allocated by `backboardd` via `SweetSurface.cpp` use `s->mapCache = kIOMapDefaultCache` (normal cached RAM), so UIKit CPU drawing is cache-speed, NOT degraded by uncached Device memory (`kIOMapInhibitCache`).
+    - **The actual rendering bottleneck:** Because `gpu=1` is not passed in cmdline, `s->gpuPool` is `false`. In `AppleCLCD::swap(rec)`, `directEligible` returns `false`, forcing every frame into the fallback `flipFrom`:
+      1. A full **10.36 MB `memcpy`** from the userland surface to the kernel double-buffer `fFlip[backBuffer]`.
+      2. In `flipBack()`, `sweet_dcache_clean` is called on the 10.36 MB buffer. In `osfmk/arm/caches.c` (patch 0111), `sweet_dcache_range` executes `dc cvac` **162,000 times in a tight loop per frame**.
+      3. This `memcpy` + 162,000 `dc cvac` loop burns ~30-40 ms of CPU time per frame on Cortex-A73, on top of UIKit software rendering.
+  - **CPU Frequency Verification (Issue 1b):**
+    - Verified via `shim/shim.c` (`gold_cpufreq_max()`) and `bsd/dev/sweet_cpufreq.c` (`sweet_cpufreq_max()`):
+      `SWEET CPUFREQ: gold perf state 8 -> 8 (2803 MHz)`.
+    - The 4 Gold Cortex-A73 cores (`cpus=4`) are already locked at their hardware ceiling of **2803 MHz (2.80 GHz)**. CPU clock is not degraded.
+  - **SpringBoard Stacks Symbolication (Issue 1c via `ipsw dyld a2s`):**
+    - `SpringBoard t0`: blocked in `_mach_msg2_trap` <- `_xpc_connection_send_message_with_reply_sync` <- `waitForMigrationIncludingPostRestoreMigration:` <- `shouldShowCloudConfigurationUI` <- `_iOS_BYSetupAssistantNeedsToRun` <- `_BYSetupAssistantPrepareLaunchSentinel` <- `___SBPrepareLaunchSentinelIfNecessary_block_invoke`.
+      - Disassembly revealed this was an asynchronous dispatch block (`___block_literal_global.96`) checking if Setup Assistant needs to run because `LaunchSentinelExists()` was false. Once `profiled` replied / migration timed out, it posted `com.apple.purplebuddy.setupdone` and completed.
+    - `SpringBoard t2`: blocked in `-[BSXPCServiceConnectionMessage _sendSynchronously:]` <- `-[DNDRemoteServiceConnection queryStateWithRequestDetails:completionHandler:]` <- `-[DNDStateService queryCurrentStateWithCompletionHandler:]` waiting for `dndd` (Do Not Disturb daemon).
+- **Missing System App Icons Solved (Issue 2):**
+  - Found all 32 missing stock system apps (`Calculator.app`, `MobileTimer.app` (Clock), `MobileNotes.app`, `Files.app`, `Weather.app`, `Compass.app`, `Contacts.app`, `FaceTime.app`, `VoiceMemos.app`, `Music.app`, `Reminders.app`, `Shortcuts.app`, `Stocks.app`, `Tips.app`, `Maps.app`, etc.) sitting in `/private/var/staged_system_apps/`.
+  - In stock iOS, these apps are unstaged into `/var/containers/Bundle/Application/` by `MSUDataMigrator` during initial restore. Because `datamigrator` was bypassed (`LastSystemVersion=20H392`), they were never moved or registered.
+  - Fix: Copied all 32 system applications directly into `/Applications/`, so LaunchServices (`lsd`) registers them as first-class system applications on boot.
+  - Fixed `Camera.app`: removed `SBAppTags: ['still-camera']` from `/Applications/Camera.app/Info.plist` so SpringBoard no longer hides the Camera icon.
+- **USB CDC-ECM & Clean Kernel Ready (Issue 3):**
+  - CI build `39989224514` succeeded with clean unified diffs for patches 0951 (sandbox grant all) and 0952 (topaz DWC3 USB peripheral at base `0x04e00000`).
+  - Kernel downloaded to `xnu/out/kernel.development.sweet`.
+  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` with flags `sweetusb=2 sweetfb_stayon=1 sweetfb_hz=30 sweettouch=1 sweetfb_noconsole=1`.
+  - Ready for boot test: `fastboot boot shim/out/shim-boot.img`.
+
 ### >>> UPDATE 2026-10-23 late (topaz: blackscreen diagnosis, sweetfb_stayon=1, 30 Hz, clean 0951 & 0952 patches) <<<
 
 - **Diagnosis of boot-blackscreen.txt:**
