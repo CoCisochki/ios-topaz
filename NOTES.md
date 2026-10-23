@@ -2,6 +2,21 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-23 FPS optimization (topaz: Patch 0953 dirty line framebuffer cache flush & skip unchanged lines) <<<
+
+- **Patch 0953 Implemented & Pushed (commit `3a10011`, CI run `40001474448`):**
+  - **Eliminated Framebuffer Bottleneck in `AppleCLCD::flipFrom` and `flipBack`:**
+    - Previously, every presentation triggered an unconditional 10.36 MB `memcpy` and a whole-buffer flush of 162,000 `dc cvac` instructions in `flipBack()`, burning 30-40 ms per frame on Cortex-A73 Gold.
+    - Implemented 64-byte (`u128` x4 / 8x `uint64_t`) chunk comparison `sweet_fb_copy_dirty(dst, src, len)`:
+      - Reads 64-byte blocks from both `src` (IOSurface) and `dst` (back buffer `fFlip`).
+      - If all 64 bytes match (`diff == 0`), skips writing and skips cache maintenance completely.
+      - If changed, writes the 64 bytes using paired `stp` and executes targeted `dc cvac` only for that specific line.
+    - Added `AppleCLCD::flipBack(bool clean = true)`:
+      - `flipFrom` calls `flipBack(false)`, which skips the 162,000-iteration `sweet_dcache_clean` entirely and only issues a single Data Synchronization Barrier `dsb sy` before pointing the MDP scanout at the back buffer.
+      - Boot apple fade and display-off preserve `flipBack(true)` for full-buffer maintenance.
+    - Zeroed and cleaned `fFlip[0]` and `fFlip[1]` at driver `start()` to guarantee 100% cache coherency from frame 0.
+  - Patch created as `xnu/patches/0953-topaz-fb-dirty-line-flush.patch` and verified clean with `git apply --check`.
+
 ### >>> UPDATE 2026-10-23 final night (topaz: USB DWC3 verified alive, 0x1dee72e28 crash info analysis, profiled & accountsd directory fix) <<<
 
 - **🎉 MILESTONE: USB-Ethernet ue0 works on SM6225 (Topaz):**
