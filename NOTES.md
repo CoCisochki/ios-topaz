@@ -2,24 +2,25 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
-### >>> UPDATE 2026-10-23 milestone (topaz: UID 1000 fixed to 501:501, sweetscan removed, Patch 0953 kernel active) <<<
+### >>> UPDATE 2026-10-23 milestone (topaz: UID 1000 fixed, mobileactivationd & lsd containers restored, sweetsample active) <<<
 
-- **Root Cause of Permission Denied (errno 13) Fixed:**
-  - `accountsd` and `profiled` previously crashed due to `errno 13 (Permission denied)` because `/var/mobile` and subfolders had host UID 1000 / GID 1000 from non-root loopback creation on Linux.
-  - Ownership and permissions recursively updated under root:
-    - `/private/var/mobile` and all subfolders (`Library`, `Accounts`, `Preferences`, `Caches`): `501:501` (`mobile:mobile`), `chmod 755` (and `777` on `Caches`).
-    - `/private/var/containers`: `501:501`, `chmod 755`.
-    - `/private/var/db/lsd`: `501:501`.
-    - `/private/var/Keychains`, `keybags`, `root`, `Applications`: `0:0` (`root:wheel`).
-  - Repacked fresh `ios16-root.simg` (SHA256: `e71a42946df71716291976066055b9bbb7089f20259359899e6e0c44f9edcaef`).
+- **Root Cause of Permission Denied (errno 13) & mobileactivationd Trap Solved:**
+  - `accountsd` and `profiled` are completely fixed by restoring `501:501` on `/private/var/mobile`.
+  - Disassembled `mobileactivationd` at `0x1001bf3bc` (`sub 0x102fa73bc`, line 321):
+    - Confirmed trap `brk #1` in `main` preceded by `Failed to perform boot initialization tasks.` / `Failed to create data ark.`
+    - Reason: `/private/var/containers/Data/System/com.apple.mobileactivationd` had been changed to 501:501 instead of root `0:0`.
+  - Container hierarchy cleanly fixed:
+    - Restored `/private/var/containers` and `/private/var/containers/Data/System/com.apple.mobileactivationd` to `0:0` (`root:wheel`).
+    - Removed handcrafted dummy directories in `Shared/SystemGroup/` (`systemgroup.com.apple.lsd`, `mobilegestaltcache`, `installcoordinationd`) which caused `containermanagerd` / `lsd` to hang during reseed. Retained only `systemgroup.com.apple.configurationprofiles` (with `chmod 777`).
+    - Verified `/private/var/mobile` ownership is `501:501` (`mobile:mobile`).
+  - Repacked fresh `ios16-root.simg` (SHA256: `e080bb23652a0fac87feca46af5d934ebf9ec642a609f8c252bb0024f371c1af`).
 - **Kernel Built & Downloaded with Patch 0953:**
   - CI build `40001474448` succeeded: [Run 40001474448](https://github.com/CoCisochki/ios-topaz/actions/runs/40001474448).
   - Downloaded to `xnu/out/kernel.development.sweet` (SHA256: `b74add3cacc093f80d58ed228169e45cae45554e115e4f9eab49b1112bb77647`).
   - Contains dirty line comparison (skipping unchanged lines) and targeted `dc cvac` per 64-byte block, eliminating the 162,000 `dc cvac` bottleneck per frame.
-- **Bootloader & Cmdline Refined (sweetscan removed):**
-  - Removed `sweetscan=...` from kernel cmdline to eliminate 37 MB heap scanning overhead on process exits.
-  - Retained `sweetnull=profiled,accountsd,backboardd,SpringBoard` for non-intrusive logging.
-  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` (SHA256: `a6859339c19204e86495ffdc7779ad5815c5985400dd90782a69316e2b37c614`).
+- **Diagnostic sweetsample Boot Image Ready:**
+  - Added `sweetsample=lsd,containermanagerd,installcoordinationd,pkd,SpringBoard` to cmdline.
+  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` (SHA256: `a122eaeb4ceedbbc3a2e51efb02f73c0650bc359f5e552f658ccf2016d137531`).
 
 ### >>> UPDATE 2026-10-23 FPS optimization (topaz: Patch 0953 dirty line framebuffer cache flush & skip unchanged lines) <<<
 

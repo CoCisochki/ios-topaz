@@ -176,9 +176,6 @@ def ensure_system_directories(root_directory):
 
     system_groups = [
         ('systemgroup.com.apple.configurationprofiles', ['Library/ConfigurationProfiles']),
-        ('systemgroup.com.apple.mobilegestaltcache', ['Library/Caches']),
-        ('systemgroup.com.apple.lsd', ['Library/Caches']),
-        ('systemgroup.com.apple.installcoordinationd', ['Library/InstallCoordination']),
     ]
     sg_base = os.path.join(root_directory, 'private/var/containers/Shared/SystemGroup')
     for sg_id, subdirs in system_groups:
