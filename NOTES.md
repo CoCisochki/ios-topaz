@@ -2,20 +2,29 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
-### >>> UPDATE 2026-10-23 (topaz: audit, AKS, driverkitd, hot-patch sandbox, USB DWC3, daemons) <<<
+### >>> UPDATE 2026-10-23 (topaz: audit, AKS, driverkitd, USB DWC3, FPS blur tweaks, topaz-shell) <<<
 
 - **Kernel update & Sandbox Hot-patch (Task 1 & 2):**
   - Synced kernel from CI run `39817478111` (commit `e477291`) containing patches up to 0950 (`kAKSWrapKey` / `kAKSUnwrapKey` sel 10/11 in SweetKeyStore).
   - Applied source patches `0951-topaz-sandbox-grant-all-privileges.patch` and `0952-topaz-dwc3-usb.patch` (SM6225 DWC3 `0x04e00000`, QSCRATCH `0x04ef8800`), committed as `27d8d2b`.
   - CI build run `39981613469` completed successfully with full Clang build; downloaded artifact `xnu-kernel` and installed clean `kernel.development.sweet` into `xnu/out/`.
-  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` (SHA256: `9aaead52a4f4528f12324055f778cfaecd5a762924202945460c5128d725eb45`).
-- **Rootfs optimizations & Images (Task 3 & 4):**
-  - Mounted `ios16-root.img` rw, ran updated `tools/sweet-root-tweaks.py`.
-  - Stripped 23 heavy / unnecessary daemons from `System/Library/xpc/launchd.plist` (including `com.apple.driverkitd` to stop crash loop, plus telemetry, Siri, Spotlight indexing, Duet, Watch services).
+  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` with flags `sweetusb=2 sweetfb_hz=60 sweetfb_noconsole=1` (SHA256: `319efb333061155ce7a3aa415878b8085fb08815ae8db96420a19a8d37fb7206`).
+- **FPS Blur & Animation Optimization (Item 1):**
+  - Updated `tools/sweet-root-tweaks.py` to write Accessibility & UIKit preferences to both `/private/var/mobile/Library/Preferences/` and `/Library/Managed Preferences/mobile/` (501:501):
+    - `com.apple.Accessibility.plist`: `EnhancedBackgroundContrastEnabled=True` (disables blur/transparency), `ReduceMotionEnabled=True` (disables spring scale & parallax), `ReduceMotionAutoplayMessagesEffectsEnabled=False`, `ReduceMotionAutoplayVideoPreviewsEnabled=False`.
+    - `com.apple.UIKit.plist` and `.GlobalPreferences.plist`: `UIAnimationDragCoefficient=0.1` (10x faster animations).
+- **Interactive Network Shell (Item 3):**
+  - Created `tools/sweet-shell.S` (position-independent ARM64 Mach-O shell daemon with raw XNU syscalls, zero dylib dependencies).
+  - Implements TCP server on `0.0.0.0:1337` (`AF_INET`, `SO_REUSEADDR`).
+  - Supports commands: `help`, `uname`, `ls <dir>` (`SYS_getdirentries64`), `cat <file>`, `ps` (active PID scanner), `dmesg` (`/dev/klog`), `exec <binary>` (`fork` + `dup2` + `execve`), `reboot` (`kill(1, 9)`), `exit`.
+  - Compiled and wrapped into static Mach-O via `tools/mkinit.py` as `/usr/local/bin/topaz-shell`.
+  - Registered as `com.topaz.shell` in `/System/Library/xpc/launchd.plist` and `/Library/LaunchDaemons/com.topaz.shell.plist`.
+- **Rootfs optimizations & Images (Item 1, 3, 4):**
+  - Applied updated `tools/sweet-root-tweaks.py` to `ios16-root.img`.
+  - Stripped 23 heavy / unnecessary daemons from `System/Library/xpc/launchd.plist`.
   - Preserved `/private/tmp`, `/private/var/tmp` (1777), `/private/var/db/lsd`, and `mobileactivationd` container data ark.
-  - Verified LaunchServices database `/private/var/db/lsd/` and `/private/var/Keychains/` are clean for a fresh start with working Keychain.
-  - Unmounted cleanly and verified image integrity with `fsck.hfsplus -fy ios16-root.img` (OK, 0 errors).
-  - Generated sparse image `ios16-root.simg` for flashing (SHA256: `f041c2a47ef22e1dd18b7f2f676ebed5500dd1823e3c463433c36bc0dbfe73f9`).
+  - Verified image integrity with `fsck.hfsplus -fy ios16-root.img` (OK, 0 errors).
+  - Generated sparse image `ios16-root.simg` for flashing (SHA256: `4fe1ac9023b5b21d23571f6e063c12589b70a7bf1aa818f27606d840b7bfcc05`).
 - **Tooling:** Created `tools/sweet-inject-app.py` for injecting .app bundles and command binaries.
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<

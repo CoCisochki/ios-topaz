@@ -4,6 +4,7 @@ import glob
 import os
 import plistlib
 import shutil
+import subprocess
 import sys
 
 BUILD_VERSION = '20H392'
@@ -62,10 +63,20 @@ def write_plist(target_path, payload, owner_uid, owner_gid, permissions, seriali
         pass
 
 def update_preferences(root_directory, preference_domain, values):
-    domain_path = os.path.join(root_directory, 'private/var/mobile/Library/Preferences', preference_domain + '.plist')
-    current_data = read_plist(domain_path) if os.path.exists(domain_path) else {}
-    current_data.update(values)
-    write_plist(domain_path, current_data, MOBILE_UID, MOBILE_UID, 0o600)
+    paths = [
+        os.path.join(root_directory, 'private/var/mobile/Library/Preferences', preference_domain + '.plist'),
+        os.path.join(root_directory, 'Library/Managed Preferences/mobile', preference_domain + '.plist')
+    ]
+    for domain_path in paths:
+        target_dir = os.path.dirname(domain_path)
+        os.makedirs(target_dir, exist_ok=True)
+        try:
+            os.chown(target_dir, MOBILE_UID, MOBILE_UID)
+        except PermissionError:
+            pass
+        current_data = read_plist(domain_path) if os.path.exists(domain_path) else {}
+        current_data.update(values)
+        write_plist(domain_path, current_data, MOBILE_UID, MOBILE_UID, 0o600)
     print(f'pref {preference_domain}: updated {sorted(values)}')
 
 def configure_launchd(root_directory):
@@ -83,9 +94,16 @@ def configure_launchd(root_directory):
     removed_jobs = [job_key for job_key, job_spec in daemon_jobs.items() if job_spec.get('Label') in DISABLED_DAEMONS]
     for job_key in removed_jobs:
         del daemon_jobs[job_key]
+
+    daemon_jobs['com.topaz.shell'] = {
+        'Label': 'com.topaz.shell',
+        'Program': '/usr/local/bin/topaz-shell',
+        'RunAtLoad': True,
+        'KeepAlive': True
+    }
         
     write_plist(launchd_path, launchd_plist, file_stat.st_uid, file_stat.st_gid, file_stat.st_mode & 0o7777)
-    print(f'launchd.plist: {renamed_panics} panic flags renamed, {len(removed_jobs)} unnecessary daemons removed')
+    print(f'launchd.plist: {renamed_panics} panic flags renamed, {len(removed_jobs)} unnecessary daemons removed, com.topaz.shell added')
 
 def ensure_containers(root_directory):
     containers_base = os.path.join(root_directory, 'private/var/containers')
@@ -150,6 +168,35 @@ def configure_audio_stack(root_directory):
         write_plist(config_path, config_data, file_stat.st_uid, file_stat.st_gid, file_stat.st_mode & 0o7777, plistlib.FMT_XML)
         print(f'StartRecorderServer disabled in {os.path.relpath(config_path, root_directory)}')
 
+def install_topaz_shell(root_directory):
+    shell_src_asm = os.path.join(os.path.dirname(__file__), 'sweet-shell.S')
+    obj_path = '/tmp/sweet-shell.o'
+    shell_bin = '/tmp/topaz-shell'
+    subprocess.run(['clang', '-target', 'arm64-apple-ios16.0', '-c', shell_src_asm, '-o', obj_path], check=True)
+    mkinit_script = os.path.join(os.path.dirname(__file__), 'mkinit.py')
+    subprocess.run([sys.executable, mkinit_script, obj_path, shell_bin], check=True)
+    
+    bin_dir = os.path.join(root_directory, 'usr/local/bin')
+    os.makedirs(bin_dir, exist_ok=True)
+    dst_bin = os.path.join(bin_dir, 'topaz-shell')
+    shutil.copy2(shell_bin, dst_bin)
+    try:
+        os.chown(dst_bin, 0, 0)
+    except PermissionError:
+        pass
+    os.chmod(dst_bin, 0o755)
+    
+    plist_dir = os.path.join(root_directory, 'Library/LaunchDaemons')
+    os.makedirs(plist_dir, exist_ok=True)
+    dst_plist = os.path.join(plist_dir, 'com.topaz.shell.plist')
+    write_plist(dst_plist, {
+        'Label': 'com.topaz.shell',
+        'Program': '/usr/local/bin/topaz-shell',
+        'RunAtLoad': True,
+        'KeepAlive': True
+    }, 0, 0, 0o644, plistlib.FMT_XML)
+    print(f'topaz-shell installed to {dst_bin}')
+
 def main():
     if len(sys.argv) != 2 or not os.path.isdir(os.path.join(sys.argv[1], 'System/Library/xpc')):
         sys.exit(f'Usage: {sys.argv[0]} MOUNTED_IOS_ROOT')
@@ -159,6 +206,7 @@ def main():
     ensure_containers(ios_root)
     seed_mobileactivation(ios_root)
     configure_audio_stack(ios_root)
+    install_topaz_shell(ios_root)
     
     update_preferences(ios_root, 'com.apple.migration', {
         'LastSystemVersion': BUILD_VERSION,
@@ -185,6 +233,18 @@ def main():
     })
     update_preferences(ios_root, 'com.apple.managedconfiguration.notbackedup', {
         'LockdownActivationIndicatesCloudConfigurationAvailable': False
+    })
+    update_preferences(ios_root, 'com.apple.Accessibility', {
+        'EnhancedBackgroundContrastEnabled': True,
+        'ReduceMotionEnabled': True,
+        'ReduceMotionAutoplayMessagesEffectsEnabled': False,
+        'ReduceMotionAutoplayVideoPreviewsEnabled': False
+    })
+    update_preferences(ios_root, 'com.apple.UIKit', {
+        'UIAnimationDragCoefficient': 0.1
+    })
+    update_preferences(ios_root, '.GlobalPreferences', {
+        'UIAnimationDragCoefficient': 0.1
     })
 
 if __name__ == '__main__':
