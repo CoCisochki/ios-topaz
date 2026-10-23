@@ -120,6 +120,9 @@ def build(seed=None, qemu=False, highmem=False, native=False, midmem=False):
         ('effective-production-status-ap', u32(0)),
         ('certificate-security-mode', u32(1)),
         ('effective-security-mode-sep', u32(1)),
+        ('mac-address-wifi0', b'\x02\x00\x73\x77\x65\x01'),
+        ('mac-address-bluetooth0', b'\x02\x00\x73\x77\x65\x02'),
+        ('mac-address-enet0', b'\x02\x00\x73\x77\x65\x03'),
     ], [node('memory-map', [ph()]),
         # Local boot policy (kern_csr.c): SIP relaxed like `csrutil disable`
         # (lp-sip0: untrusted kexts, unrestricted FS, task_for_pid, kernel

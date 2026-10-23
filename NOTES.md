@@ -2,6 +2,23 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-23 (topaz: audit, AKS, driverkitd, hot-patch sandbox, USB DWC3, daemons) <<<
+
+- **Kernel update & Sandbox Hot-patch (Task 1 & 2):**
+  - Synced kernel from CI run `39817478111` (commit `e477291`) containing patches up to 0950 (`kAKSWrapKey` / `kAKSUnwrapKey` sel 10/11 in SweetKeyStore).
+  - Applied binary hot-patch to `xnu/out/kernel.development.sweet` at file offset `0x7da640` (`_sweet_sandbox_priv_grant`): replaced prologue with `mov w0, #0; ret` (`00 00 80 52 c0 03 5f d6`), eliminating sandbox privilege denials for logd (1002), rapportd (12000), identityservicesd (12001), symptomsd (10003). Original saved as `kernel.development.sweet.orig`.
+  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` with the patched kernel and `mac-address-*` ADT properties.
+- **USB DWC3 patch for SM6225 (Task 1):**
+  - Created `xnu/patches/0952-topaz-dwc3-usb.patch` implementing SM6225 DWC3 (`0x04e00000`) and QSCRATCH (`0x04ef8800`), enabled via `sweetusb` boot-arg or `sweethw=2`.
+  - Created source patch `xnu/patches/0951-topaz-sandbox-grant-all-privileges.patch` for future CI kernel builds.
+- **Rootfs optimizations & Daemons (Task 3 & 4):**
+  - Mounted `ios16-root.img` rw, ran updated `tools/sweet-root-tweaks.py`.
+  - Stripped 23 heavy / unnecessary daemons from `System/Library/xpc/launchd.plist` (including `com.apple.driverkitd` to stop crash loop, plus telemetry, Siri, Spotlight indexing, Duet, Watch services).
+  - Preserved `/private/tmp`, `/private/var/tmp` (1777), `/private/var/db/lsd`, and `mobileactivationd` container data ark.
+  - Verified LaunchServices database `/private/var/db/lsd/` and `/private/var/Keychains/` are clean for a fresh start with working Keychain.
+  - Unmounted cleanly and verified image integrity with `fsck.hfsplus -fy ios16-root.img` (OK, 0 errors).
+- **Tooling:** Created `tools/sweet-inject-app.py` for injecting .app bundles and command binaries.
+
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
 
 **LIVE LOG over USB (0077, boot 0077s): no more recovery round-trips.** Boot an image with `sweetusb=2`, run `tools/sweet-usbnet.sh logs/live-NAME.txt` on the PC: it waits for the phone's CDC-ECM interface, sets 192.168.7.1/24 (sudo) and prints/saves the kernel console the phone streams every 100 ms as UDP to 192.168.7.1:5140 (starts with the last 64 KiB). `ping 192.168.7.2` checks the link. Current image: `shim/out/shim-boot-0077s.img` (kernel 0077, ADT sweet-0069hi, cpus=6, sweetfb_noconsole=1, sweetfb_hz=30, sweetusb=2). The recovery pull (`tools/sweet-log-pull.sh`) is still the way after a panic/hang before USB comes up.
