@@ -1,22 +1,18 @@
-From 394f18bc28471928374659102837461928374610 Mon Sep 17 00:00:00 2001
-From: Makr <ngrom33@gmail.com>
-Date: Fri, 23 Oct 2026 18:44:00 +0300
+From 7383d936a4a4d5690d6168740a9ab9b9c946f917 Mon Sep 17 00:00:00 2001
+From: test <test@test.com>
+Date: Fri, 23 Oct 2026 19:42:56 +0300
 Subject: [PATCH] topaz: 0952 DWC3 USB CDC-ECM support for SM6225
 
-Enable USB device mode and networking for topaz (SM6225).
-Map DWC3 at 0x04e00000 and QSCRATCH wrapper at 0x04ef8800.
-Trigger probe when sweetusb boot-arg is present or sweethw=2.
 ---
- bsd/dev/sweet_ufs.c |  7 ++++++-
- bsd/dev/sweet_usb.c | 41 +++++++++++++++++++++++++++++++++--------
- 2 files changed, 39 insertions(+), 9 deletions(-)
+ bsd/dev/sweet_ufs.c |  4 +++-
+ bsd/dev/sweet_usb.c | 29 ++++++++++++++++++++++++++---
+ 2 files changed, 29 insertions(+), 4 deletions(-)
 
 diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
-index b7be070..c81a29f 100644
+index 143db60..1ab76ae 100644
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -664,7 +664,12 @@ sweet_ufs_init(void)
- 	int hw = 0;
+@@ -823,7 +823,9 @@ sweet_ufs_init(void)
  	(void)PE_parse_boot_argn("sweethw", &hw, sizeof(hw));
  	sweet_touch_init();
  	sweet_keys_init();
@@ -28,10 +24,10 @@ index b7be070..c81a29f 100644
  	} else {
  		printf("SWEET UFS: USB skipped (topaz, sweethw=0)\n");
 diff --git a/bsd/dev/sweet_usb.c b/bsd/dev/sweet_usb.c
-index a1948df..d891bca 100644
+index 9c42e45..36e9db4 100644
 --- a/bsd/dev/sweet_usb.c
 +++ b/bsd/dev/sweet_usb.c
-@@ -37,8 +37,11 @@ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+@@ -44,6 +44,9 @@ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
  #define GCC_USB30_PRIM_GDSCR    0x0f004         /* bit 31: power on */
  #define CBCR_CLK_OFF            (1u << 31)
  
@@ -41,16 +37,14 @@ index a1948df..d891bca 100644
  static const struct {
  	const char *name;
  	uint32_t    off;
-@@ -48,6 +51,8 @@ static const struct {
- 	{ "clkref", 0x8c010 },
- };
+@@ -70,11 +73,13 @@ usb_rd(vm_offset_t base, uint32_t off)
+ 	return v;
+ }
  
 +static bool usb_is_topaz;
 +
- #define DWC3_PA                 0x0a600000
- #define DWC3_SIZE               0x0000d000
- #define QUSB2_PA                0x088e2000
-@@ -58,6 +63,7 @@ sweet_usb_probe(void)
+ void
+ sweet_usb_probe(void)
  {
  	int enabled = 1;
 -	uint32_t gdscr, cbcr[sizeof(usb_cbcr) / sizeof(usb_cbcr[0])];
@@ -58,7 +52,7 @@ index a1948df..d891bca 100644
  	bool clocks_on = true;
  
  	/* sweetusb=0 off, 1 (default) report state only, 2 also start the USB device */
-@@ -66,6 +72,21 @@ sweet_usb_probe(void)
+@@ -82,6 +87,20 @@ sweet_usb_probe(void)
  	if (!enabled) {
  		return;
  	}
@@ -79,7 +73,7 @@ index a1948df..d891bca 100644
  	vm_offset_t gcc = ml_io_map(GCC_PA, GCC_SIZE);
  	if (gcc == 0) {
  		printf("SWEET USB: GCC map failed\n");
-@@ -82,7 +103,7 @@ sweet_usb_probe(void)
+@@ -100,13 +119,14 @@ sweet_usb_probe(void)
  		printf("SWEET USB: controller unpowered or unclocked; DWC3 not read\n");
  		return;
  	}
@@ -88,14 +82,14 @@ index a1948df..d891bca 100644
  	if (dwc == 0) {
  		printf("SWEET USB: DWC3 map failed\n");
  		return;
-@@ -90,6 +111,7 @@ sweet_usb_probe(void)
+ 	}
  	printf("SWEET USB: DWC3 GSNPSID 0x%08x GCTL 0x%08x GSTS 0x%08x GUSB2PHYCFG 0x%08x\n",
  	    usb_rd(dwc, 0xc120), usb_rd(dwc, 0xc110), usb_rd(dwc, 0xc118), usb_rd(dwc, 0xc200));
 +	}
  	printf("SWEET USB: DWC3 DCFG 0x%08x DCTL 0x%08x DEVTEN 0x%08x DSTS 0x%08x DALEPENA 0x%08x\n",
  	    usb_rd(dwc, 0xc700), usb_rd(dwc, 0xc704), usb_rd(dwc, 0xc708), usb_rd(dwc, 0xc70c),
  	    usb_rd(dwc, 0xc720));
-@@ -101,6 +123,9 @@ sweet_usb_probe(void)
+@@ -116,6 +136,9 @@ sweet_usb_probe(void)
  	if (enabled >= 2) {
  		sweet_usb_gadget_start(dwc);
  	}
@@ -105,7 +99,7 @@ index a1948df..d891bca 100644
  	if (cbcr[5] & CBCR_CLK_OFF) {
  		printf("SWEET USB: ahb2phy clock off; QUSB2 PHY not read\n");
  		return;
-@@ -491,7 +516,7 @@ sweet_usb_gadget_start(vm_offset_t dwc)
+@@ -866,7 +889,7 @@ sweet_usb_gadget_start(vm_offset_t dwc)
  	dwc_wr(DALEPENA, 0x3);
  	ud_start_setup();
  
@@ -115,4 +109,5 @@ index a1948df..d891bca 100644
  		uint32_t hs = usb_rd(qs, QSCRATCH_HS_PHY_CTRL), ss = usb_rd(qs, QSCRATCH_SS_PHY_CTRL);
  		printf("SWEET USB: QSCRATCH HS_PHY_CTRL 0x%08x SS_PHY_CTRL 0x%08x GENERAL_CFG 0x%08x\n",
 -- 
-2.43.0
+2.55.0
+
