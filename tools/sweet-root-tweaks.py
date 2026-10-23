@@ -44,6 +44,25 @@ DISABLED_DAEMONS = {
     'com.apple.searchpartyd',
     'com.apple.accessoryupdaterd',
     'com.apple.softwareupdated',
+    'com.apple.ReportCrash',
+    'com.apple.ReportCrash.DirectoryService',
+    'com.apple.ReportCrash.Jetsam',
+    'com.apple.DumpPanic',
+    'com.apple.DumpBasebandCrash',
+    'com.apple.osanalytics.osanalyticshelper',
+    'com.apple.OTACrashCopier',
+    'com.apple.ProxiedCrashCopier.ProxyingDevice',
+    'com.apple.accountsd',
+    'com.apple.dmd',
+    'com.apple.ScreenTimeAgent',
+    'com.apple.cloudd',
+    'com.apple.chronod',
+    'com.apple.liveactivitiesd',
+    'com.apple.memory-maintenance',
+    'com.apple.geod',
+    'com.apple.syncdefaultsd',
+    'com.apple.suggestd',
+    'com.apple.symptomsd-diag',
 }
 
 def read_plist(target_path):
@@ -104,6 +123,18 @@ def configure_launchd(root_directory):
         
     write_plist(launchd_path, launchd_plist, file_stat.st_uid, file_stat.st_gid, file_stat.st_mode & 0o7777)
     print(f'launchd.plist: {renamed_panics} panic flags renamed, {len(removed_jobs)} unnecessary daemons removed, com.topaz.shell added')
+
+    rc_bin = os.path.join(root_directory, 'System/Library/CoreServices/ReportCrash')
+    if os.path.exists(rc_bin):
+        rc_dis = os.path.join(root_directory, 'System/Library/CoreServices/ReportCrash.disabled')
+        if not os.path.exists(rc_dis):
+            shutil.move(rc_bin, rc_dis)
+            print('ReportCrash executable disabled')
+
+    for ld in ('com.apple.ReportCrash.plist', 'com.apple.DumpPanic.plist', 'com.apple.DumpBasebandCrash.plist'):
+        ld_path = os.path.join(root_directory, 'System/Library/LaunchDaemons', ld)
+        if os.path.exists(ld_path):
+            shutil.move(ld_path, ld_path + '.disabled')
 
 def ensure_containers(root_directory):
     containers_base = os.path.join(root_directory, 'private/var/containers')
@@ -197,6 +228,25 @@ def install_topaz_shell(root_directory):
     }, 0, 0, 0o644, plistlib.FMT_XML)
     print(f'topaz-shell installed to {dst_bin}')
 
+def stage_system_applications(root_directory):
+    src_base = os.path.join(root_directory, 'private/var/staged_system_apps')
+    dst_base = os.path.join(root_directory, 'Applications')
+    if os.path.isdir(src_base):
+        for item in sorted(os.listdir(src_base)):
+            if item.endswith('.app'):
+                src_path = os.path.join(src_base, item)
+                dst_path = os.path.join(dst_base, item)
+                if not os.path.exists(dst_path):
+                    shutil.copytree(src_path, dst_path, symlinks=True)
+                    print(f'staged app: {item} -> /Applications/')
+    camera_plist = os.path.join(root_directory, 'Applications/Camera.app/Info.plist')
+    if os.path.exists(camera_plist):
+        d = read_plist(camera_plist)
+        if 'SBAppTags' in d:
+            del d['SBAppTags']
+            write_plist(camera_plist, d, 0, 0, 0o644, plistlib.FMT_XML)
+            print('Camera.app: SBAppTags removed')
+
 def main():
     if len(sys.argv) != 2 or not os.path.isdir(os.path.join(sys.argv[1], 'System/Library/xpc')):
         sys.exit(f'Usage: {sys.argv[0]} MOUNTED_IOS_ROOT')
@@ -207,6 +257,7 @@ def main():
     seed_mobileactivation(ios_root)
     configure_audio_stack(ios_root)
     install_topaz_shell(ios_root)
+    stage_system_applications(ios_root)
     
     update_preferences(ios_root, 'com.apple.migration', {
         'LastSystemVersion': BUILD_VERSION,

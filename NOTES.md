@@ -2,6 +2,26 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-23 late night (topaz: crash-loop resolution, ReportCrash disabled, -no_corpses) <<<
+
+- **Root Cause of Massive Crash Loop & 100% CPU Consumption:**
+  - Decoded all crash stacks via `ipsw dyld a2s`:
+    - `accountsd`, `dmd`, `ScreenTimeAgent`, `syncdefaultsd`: crash in `-[ACDDatabaseInitializer updateDefaultContentIfNecessary:]` -> `-[NSManagedObjectContext performBlockAndWait:]` -> unhandled CoreData exception while opening SQLite database.
+    - `liveactivitiesd` / `chronod`: Swift trap in `SessionCore/ActivityDatabase.swift` ("No path") and `ChronoCore`.
+    - `cloudd`: `__os_crash` in `CKDLogicalDeviceContext.m` ("failed to create database: %@").
+    - `geod`: NULL dispatch source dereference (`far 0x38`) in `__dispatch_source_set_handler`.
+  - Every crash spawned `ReportCrash`, which repeatedly called AKS and generated crash dumps ("Too many corpses being created"), saturating all 4 CPUs and UFS I/O.
+- **Rootfs Crash-Loop Remediation:**
+  - Disabled `ReportCrash` daemon in `launchd.plist` and renamed `/System/Library/CoreServices/ReportCrash` -> `ReportCrash.disabled`.
+  - Removed all crash-copier daemons (`com.apple.ReportCrash*`, `com.apple.DumpPanic`, `com.apple.DumpBasebandCrash`, `com.apple.osanalytics.osanalyticshelper`).
+  - Removed all 13 crashing daemons from `System/Library/xpc/launchd.plist`:
+    `accountsd`, `dmd`, `ScreenTimeAgent`, `cloudd`, `chronod`, `liveactivitiesd`, `com.apple.memory-maintenance` (`mmaintenanced`), `geod`, `syncdefaultsd`, `suggestd`, `symptomsd-diag`.
+  - Applied changes to `ios16-root.img`, regenerated `ios16-root.simg`.
+- **Kernel Cmdline Corpse Suppression:**
+  - Added `-no_corpses exc_via_corpse_forking=0` to kernel boot-args.
+  - XNU tunable `corpses_disabled = 1` prevents `task_generate_corpse_internal` from creating any corpse tasks or sending `EXC_CORPSE_NOTIFY`.
+  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` (SHA256: `fd8d60f5a0c693abd87359b0c60ee4d0fa31a2dcff5c4489d87c47fbe996b47a`).
+
 ### >>> UPDATE 2026-10-23 midnight (topaz: low FPS diagnosis, missing system apps fix, USB DWC3 kernel ready) <<<
 
 - **Root Cause & Diagnosis of Low FPS / Rendering Bottlenecks:**
