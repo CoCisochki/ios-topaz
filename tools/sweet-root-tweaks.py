@@ -52,7 +52,6 @@ DISABLED_DAEMONS = {
     'com.apple.osanalytics.osanalyticshelper',
     'com.apple.OTACrashCopier',
     'com.apple.ProxiedCrashCopier.ProxyingDevice',
-    'com.apple.accountsd',
     'com.apple.dmd',
     'com.apple.ScreenTimeAgent',
     'com.apple.cloudd',
@@ -120,6 +119,17 @@ def configure_launchd(root_directory):
         'RunAtLoad': True,
         'KeepAlive': True
     }
+
+    prof_key = '/System/Library/LaunchDaemons/com.apple.managedconfiguration.profiled.plist'
+    if prof_key in daemon_jobs:
+        daemon_jobs[prof_key]['ThrottleInterval'] = 5
+
+    acct_key = '/System/Library/LaunchDaemons/com.apple.accountsd.plist'
+    if acct_key not in daemon_jobs:
+        acct_path = os.path.join(root_directory, acct_key.lstrip('/'))
+        if os.path.exists(acct_path):
+            daemon_jobs[acct_key] = read_plist(acct_path)
+            daemon_jobs[acct_key]['ThrottleInterval'] = 5
         
     write_plist(launchd_path, launchd_plist, file_stat.st_uid, file_stat.st_gid, file_stat.st_mode & 0o7777)
     print(f'launchd.plist: {renamed_panics} panic flags renamed, {len(removed_jobs)} unnecessary daemons removed, com.topaz.shell added')
@@ -135,6 +145,61 @@ def configure_launchd(root_directory):
         ld_path = os.path.join(root_directory, 'System/Library/LaunchDaemons', ld)
         if os.path.exists(ld_path):
             shutil.move(ld_path, ld_path + '.disabled')
+
+def ensure_system_directories(root_directory):
+    dirs_mobile = [
+        'private/var/mobile/Library/Accounts',
+        'private/var/mobile/Library/ConfigurationProfiles',
+        'private/var/mobile/Library/UserConfigurationProfiles',
+    ]
+    for d in dirs_mobile:
+        p = os.path.join(root_directory, d)
+        os.makedirs(p, exist_ok=True)
+        try:
+            os.chown(p, MOBILE_UID, MOBILE_UID)
+            os.chmod(p, 0o755)
+        except PermissionError:
+            pass
+
+    dirs_root = [
+        'private/var/root/Library/Accounts',
+        'private/var/root/Library/ConfigurationProfiles',
+    ]
+    for d in dirs_root:
+        p = os.path.join(root_directory, d)
+        os.makedirs(p, exist_ok=True)
+        try:
+            os.chown(p, 0, 0)
+            os.chmod(p, 0o755)
+        except PermissionError:
+            pass
+
+    system_groups = [
+        ('systemgroup.com.apple.configurationprofiles', ['Library/ConfigurationProfiles']),
+        ('systemgroup.com.apple.mobilegestaltcache', ['Library/Caches']),
+        ('systemgroup.com.apple.lsd', ['Library/Caches']),
+        ('systemgroup.com.apple.installcoordinationd', ['Library/InstallCoordination']),
+    ]
+    sg_base = os.path.join(root_directory, 'private/var/containers/Shared/SystemGroup')
+    for sg_id, subdirs in system_groups:
+        sg_dir = os.path.join(sg_base, sg_id)
+        os.makedirs(sg_dir, exist_ok=True)
+        try:
+            os.chown(sg_dir, 0, 0)
+            os.chmod(sg_dir, 0o755)
+        except PermissionError:
+            pass
+        meta_plist = os.path.join(sg_dir, '.com.apple.mobile_container_manager.metadata.plist')
+        if not os.path.exists(meta_plist):
+            write_plist(meta_plist, {'MCMMetadataIdentifier': sg_id}, 0, 0, 0o644, plistlib.FMT_XML)
+        for s in subdirs:
+            sp = os.path.join(sg_dir, s)
+            os.makedirs(sp, exist_ok=True)
+            try:
+                os.chown(sp, 0, 0)
+                os.chmod(sp, 0o755)
+            except PermissionError:
+                pass
 
 def ensure_containers(root_directory):
     containers_base = os.path.join(root_directory, 'private/var/containers')
@@ -254,6 +319,7 @@ def main():
     ios_root = sys.argv[1]
     configure_launchd(ios_root)
     ensure_containers(ios_root)
+    ensure_system_directories(ios_root)
     seed_mobileactivation(ios_root)
     configure_audio_stack(ios_root)
     install_topaz_shell(ios_root)

@@ -2,6 +2,34 @@
 
 ## Agent handoff / active work (2026-10-15, latest)
 
+### >>> UPDATE 2026-10-23 final night (topaz: USB DWC3 verified alive, 0x1dee72e28 crash info analysis, profiled & accountsd directory fix) <<<
+
+- **🎉 MILESTONE: USB-Ethernet ue0 works on SM6225 (Topaz):**
+  - Boot log confirms: `SWEET USB: ue0 rx 68 tx 212 frames`.
+  - Kernel patch 0952 successfully configured Qualcomm DWC3 and CDC-ECM wrapper.
+- **-no_corpses Verified:**
+  - Log confirmed: `Process[161] was destined to be corpse. But corpse is disabled by config`.
+  - Zero corpse tasks created, `ReportCrash` storm stopped.
+- **Analysis of Shared Crash Fault Address `far = 0x1dee72e28`:**
+  - `0x1dee72e28` is `libc++abi.dylib (__DATA.__crash_info)`.
+  - When an unhandled Objective-C/C++ exception occurs, `_objc_terminate` writes the exception details to `__crash_info` before calling `std::terminate` -> `_abort`.
+  - Stack inspection for `profiled`:
+    - `profiled` runs as `mobile` (501) with `ThrottleInterval: 0` and requires `/var/mobile/Library/UserConfigurationProfiles/profiledRunning` and `systemgroup.com.apple.configurationprofiles`.
+    - Neither directory existed on the userdata root, causing `[NSURL fileURLWithPath:nil]` or file open failures that threw unhandled `NSInvalidArgumentException`.
+- **System Directories & SystemGroup Containers Created:**
+  - Added `ensure_system_directories()` in `tools/sweet-root-tweaks.py`:
+    - Created `/private/var/mobile/Library/Accounts` (501:501, 0755).
+    - Created `/private/var/mobile/Library/ConfigurationProfiles` (501:501, 0755).
+    - Created `/private/var/mobile/Library/UserConfigurationProfiles` (501:501, 0755).
+    - Created `/private/var/root/Library/Accounts` and `ConfigurationProfiles`.
+    - Initialized SystemGroup containers in `/private/var/containers/Shared/SystemGroup/`:
+      `systemgroup.com.apple.configurationprofiles`, `systemgroup.com.apple.mobilegestaltcache`, `systemgroup.com.apple.lsd`, `systemgroup.com.apple.installcoordinationd` (with `.com.apple.mobile_container_manager.metadata.plist`).
+  - Restored `accountsd` job in `launchd.plist` with `ThrottleInterval: 5` and set `profiled` `ThrottleInterval: 5`.
+  - Repacked `ios16-root.simg` (SHA256: `a1b8e2723a4b030f2a3dfd5041f8dfaa619aa121be1948aebe2ebe2f006d6410`).
+- **Kernel Cmdline Diagnostics Added:**
+  - Added `sweetnull=profiled,accountsd,backboardd,SpringBoard` and `sweetscan=profiled,accountsd,backboardd,SpringBoard` to cmdline.
+  - Rebuilt `shim/out/payload.bin` and `shim/out/shim-boot.img` (SHA256: `082591c17cf65559f5a2a5a745d662e48ca8414dc5f22d753dd99048e8a00a58`).
+
 ### >>> UPDATE 2026-10-23 late night (topaz: crash-loop resolution, ReportCrash disabled, -no_corpses) <<<
 
 - **Root Cause of Massive Crash Loop & 100% CPU Consumption:**
