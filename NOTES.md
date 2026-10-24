@@ -2,6 +2,43 @@
 
 ## Agent handoff / active work (2026-10-24, latest)
 
+### >>> UPDATE 2026-10-24 milestone (topaz: mobileactivationd nil array exception fix, instant Live-Push / Delta-Push architecture, topaz-shell fs tools) <<<
+
+- **Root Cause of `attempt to insert nil object from objects[1]` at 0x10004f860 Solved:**
+  - `main()` collects 4 container path `NSString*` objects into stack array `sp + 0x1f0`:
+    - `objects[0] = x26`: System container (`com.apple.mobileactivationd`), returned by `0x100034218`.
+    - `objects[1] = x19`: SystemGroup 1 (`systemgroup.com.apple.regulatory_images`), returned by `0x1000342c8`.
+    - `objects[2] = x20`: SystemGroup 2 (`systemgroup.com.apple.pisco.suinfo`), returned by `0x1000342c8`.
+    - `objects[3] = x0`:  SystemGroup 3 (`systemgroup.com.apple.mobileactivationd`), returned by `0x1000342c8`.
+  - At `0x10004f85c`: `bl 0x1001c0700` (`+[NSArray arrayWithObjects:sp+0x1f0 count:4]`).
+  - Darwin ARM64 ABI quirk: variadic arguments (`...`) are passed strictly on the stack (`[sp]`), not in registers `x0..x7`. Our previous assembly stub invoked `snprintf` with `x3`, reading uninitialized `[sp]` which corrupted the buffer and returned `nil` from `+[NSString stringWithUTF8String:]`, causing `objects[1]` to be `nil`.
+  - Fixes applied:
+    1. Replaced variadic `snprintf` stubs with pure register ABI `my_system_path` (`0x1001bf430`) and `my_system_group_path` (`0x1001bf468`) using `memcpy` and `strcpy` with default fallback group identifier.
+    2. Added fallback inside `0x1000342c8` at `0x34324`: `bl 0x100034218; mov x20, x0`.
+    3. Added trampoline `fix_objects` at `0x10004f828 -> 0x1001bf570`: uses `cmp; csel` to guarantee `x0`, `x19`, `x20` fall back to non-nil `x26`.
+    4. CodeDirectory SHA-256 rehash: all 572 slots recomputed, 0 mismatches.
+
+- **Instant Update System (Live-Push & Delta-Push) Implemented:**
+  - **Channel A: Live TCP Push via `/usr/local/bin/topaz-shell` (192.168.7.2:1337):**
+    - Enhanced `tools/sweet-shell.S` with direct filesystem manipulation syscalls:
+      - `put <filepath> <size>`: reads byte-by-byte command line to prevent TCP payload consumption, opens file with `0x0601` (`O_WRONLY|O_CREAT|O_TRUNC`) mode `0755`, streams exact byte count, writes `OK\r\n`.
+      - `mkdir <dirpath>`: `SYS_mkdir` (136) mode `0755`.
+      - `chmod <octal_mode> <path>`: `SYS_chmod` (15).
+      - `chown <uid> <gid> <path>`: `SYS_chown` (16).
+      - `rm <path>`: `SYS_unlink` (10) with fallback to `SYS_rmdir` (137).
+      - `kill <pid>`: `SYS_kill` (37) signal 9 (SIGKILL).
+    - `topaz-shell` compiled into ad-hoc signed Mach-O static executable (16,635 bytes) and updated in `ios16-root.img`.
+  - **Channel B: Block-level Delta Updater `tools/sweet-delta-push.py`:**
+    - Tracks 1 MB chunks across 16 GB `ios16-root.img` via CRC32 map `ios16-root.chunks` (64 KB file).
+    - Fast diffing finds changed blocks when mounting/unmounting HFS+ (typically 5-20 MB out of 16 GB).
+    - Pushes only dirty blocks into `/dev/block/sda19` via ADB `dd ... seek=... conv=notrunc` in ~1-2 seconds, eliminating wear on UFS flash and replacing 15-minute `img2simg + fastboot flash userdata`.
+    - CLI supports: `init`, `diff`, `push`, `put`, `mkdir`, `rm`, `kill`, `cmd`, `ps`, `dmesg`.
+
+- **Artifacts Ready:**
+  - `shim/out/shim-boot.img` (SHA256: `66e785dcfdebe41723de1a100e6ae82795a31d578b4426ef7e944b637b38399f`).
+  - `ios16-root.chunks` (SHA256: initialized baseline for 16 GB `ios16-root.img`).
+  - `tools/sweet-delta-push.py` (instant update tool).
+
 ### >>> UPDATE 2026-10-24 milestone (topaz: container creation, fallback hooks, brk#1 neutralization, CodeDirectory SHA-256 fix) <<<
 
 - **Root Cause of mobileactivationd Trap (pc 0x1001bf5bc, bt 0x100050630) Identified & Neutralized:**

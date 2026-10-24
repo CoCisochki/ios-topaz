@@ -5,16 +5,21 @@
 #define SYS_open 5
 #define SYS_close 6
 #define SYS_wait4 7
+#define SYS_unlink 10
+#define SYS_chmod 15
+#define SYS_chown 16
 #define SYS_getpid 20
 #define SYS_kill 37
+#define SYS_reboot 55
+#define SYS_execve 59
 #define SYS_dup2 90
 #define SYS_socket 97
 #define SYS_bind 104
 #define SYS_setsockopt 105
 #define SYS_listen 106
 #define SYS_accept 30
-#define SYS_execve 59
-#define SYS_reboot 55
+#define SYS_mkdir 136
+#define SYS_rmdir 137
 #define SYS_getdirentries64 344
 
 #define AF_INET 2
@@ -23,6 +28,7 @@
 #define SOL_SOCKET 0xffff
 #define SO_REUSEADDR 4
 #define O_RDONLY 0
+#define O_WRITE_CREATE 0x0601
 
 	.text
 	.globl	_start
@@ -94,17 +100,26 @@ prompt_loop:
 	bl	sock_write
 
 	sub	sp, sp, #512
+	mov	x21, #0
+	mov	x22, sp
+read_cmd_char:
 	mov	x0, x20
-	mov	x1, sp
-	mov	x2, #511
+	add	x1, x22, x21
+	mov	x2, #1
 	mov	x16, #SYS_read
 	svc	#0x80
 	b.cs	conn_closed
 	cmp	x0, #0
 	b.le	conn_closed
 
-	mov	x21, x0
-	mov	x22, sp
+	add	x1, x22, x21
+	ldrb	w0, [x1]
+	cmp	w0, #'\n'
+	b.eq	read_cmd_done
+	add	x21, x21, #1
+	cmp	x21, #510
+	b.lt	read_cmd_char
+read_cmd_done:
 	add	x23, x22, x21
 	strb	wzr, [x23]
 
@@ -148,13 +163,49 @@ check_cat:
 	adr	x1, str_cat_cmd
 	bl	str_prefix
 	cbz	x0, do_cat
+	adr	x1, str_chmod_cmd
+	bl	str_prefix
+	cbz	x0, do_chmod
+	adr	x1, str_chown_cmd
+	bl	str_prefix
+	cbz	x0, do_chown
 
 check_ps:
 	cmp	w0, #'p'
-	b.ne	check_dmesg
+	b.ne	check_mkdir
 	adr	x1, str_ps_cmd
 	bl	str_prefix
 	cbz	x0, do_ps
+	adr	x1, str_put_cmd
+	bl	str_prefix
+	cbz	x0, do_put
+
+check_mkdir:
+	cmp	w0, #'m'
+	b.ne	check_rm
+	adr	x1, str_mkdir_cmd
+	bl	str_prefix
+	cbz	x0, do_mkdir
+
+check_rm:
+	cmp	w0, #'r'
+	b.ne	check_kill
+	adr	x1, str_rm_cmd
+	bl	str_prefix
+	cbz	x0, do_rm
+	adr	x1, str_reboot_cmd
+	bl	str_prefix
+	cbz	x0, do_reboot
+
+check_kill:
+	cmp	w0, #'k'
+	b.ne	check_dmesg
+	adr	x1, str_killall_cmd
+	bl	str_prefix
+	cbz	x0, do_kill
+	adr	x1, str_kill_cmd
+	bl	str_prefix
+	cbz	x0, do_kill
 
 check_dmesg:
 	cmp	w0, #'d'
@@ -165,17 +216,10 @@ check_dmesg:
 
 check_uname:
 	cmp	w0, #'u'
-	b.ne	check_reboot
+	b.ne	check_exit
 	adr	x1, str_uname_cmd
 	bl	str_prefix
 	cbz	x0, do_uname
-
-check_reboot:
-	cmp	w0, #'r'
-	b.ne	check_exit
-	adr	x1, str_reboot_cmd
-	bl	str_prefix
-	cbz	x0, do_reboot
 
 check_exit:
 	cmp	w0, #'e'
@@ -183,19 +227,18 @@ check_exit:
 	adr	x1, str_exit_cmd
 	bl	str_prefix
 	cbz	x0, do_exit
-
-check_quit:
-	cmp	w0, #'q'
-	b.ne	check_exec
-	adr	x1, str_quit_cmd
-	bl	str_prefix
-	cbz	x0, do_exit
-
-check_exec:
 	adr	x1, str_exec_cmd
 	bl	str_prefix
 	cbz	x0, do_exec
 
+check_quit:
+	cmp	w0, #'q'
+	b.ne	cmd_unknown
+	adr	x1, str_quit_cmd
+	bl	str_prefix
+	cbz	x0, do_exit
+
+cmd_unknown:
 	adr	x1, str_unknown
 	adr	x2, str_unknown_end
 	sub	x2, x2, x1
@@ -288,6 +331,281 @@ cat_open_err:
 	adr	x1, str_err_open
 	adr	x2, str_err_open_end
 	sub	x2, x2, x1
+	bl	sock_write
+	b	free_and_prompt
+
+do_put:
+	add	x24, x22, #3
+skip_put_sp:
+	ldrb	w25, [x24]
+	cmp	w25, #' '
+	b.ne	put_path_start
+	add	x24, x24, #1
+	b	skip_put_sp
+put_path_start:
+	ldrb	w25, [x24]
+	cbz	w25, op_err
+	mov	x25, x24
+find_put_path_end:
+	ldrb	w26, [x25]
+	cbz	w26, op_err
+	cmp	w26, #' '
+	b.eq	put_path_end_found
+	add	x25, x25, #1
+	b	find_put_path_end
+put_path_end_found:
+	strb	wzr, [x25], #1
+skip_put_size_sp:
+	ldrb	w26, [x25]
+	cmp	w26, #' '
+	b.ne	put_size_start
+	add	x25, x25, #1
+	b	skip_put_size_sp
+put_size_start:
+	mov	x26, #0
+	mov	x28, #10
+parse_put_size_loop:
+	ldrb	w27, [x25], #1
+	cmp	w27, #'0'
+	b.lt	parse_put_size_done
+	cmp	w27, #'9'
+	b.gt	parse_put_size_done
+	sub	w27, w27, #'0'
+	mul	x26, x26, x28
+	add	x26, x26, x27
+	b	parse_put_size_loop
+parse_put_size_done:
+	mov	x0, x24
+	mov	x1, #O_WRITE_CREATE
+	mov	x2, #0755
+	mov	x16, #SYS_open
+	svc	#0x80
+	b.cs	op_err
+	mov	x25, x0
+
+	sub	sp, sp, #4096
+put_read_loop:
+	cbz	x26, put_read_done
+	mov	x2, x26
+	cmp	x2, #4096
+	b.le	1f
+	mov	x2, #4096
+1:
+	mov	x0, x20
+	mov	x1, sp
+	mov	x16, #SYS_read
+	svc	#0x80
+	b.cs	put_read_err
+	cmp	x0, #0
+	b.le	put_read_err
+	mov	x27, x0
+
+	mov	x0, x25
+	mov	x1, sp
+	mov	x2, x27
+	mov	x16, #SYS_write
+	svc	#0x80
+	b.cs	put_read_err
+
+	sub	x26, x26, x27
+	b	put_read_loop
+
+put_read_done:
+	add	sp, sp, #4096
+	mov	x0, x25
+	mov	x16, #SYS_close
+	svc	#0x80
+	b	op_ok
+
+put_read_err:
+	add	sp, sp, #4096
+	mov	x0, x25
+	mov	x16, #SYS_close
+	svc	#0x80
+	b	op_err
+
+do_mkdir:
+	add	x24, x22, #5
+skip_mkdir_sp:
+	ldrb	w25, [x24]
+	cmp	w25, #' '
+	b.ne	mkdir_path_ready
+	add	x24, x24, #1
+	b	skip_mkdir_sp
+mkdir_path_ready:
+	ldrb	w25, [x24]
+	cbz	w25, op_err
+	mov	x0, x24
+	mov	x1, #0755
+	mov	x16, #SYS_mkdir
+	svc	#0x80
+	b.cs	op_err
+	b	op_ok
+
+do_chmod:
+	add	x24, x22, #5
+skip_chmod_sp:
+	ldrb	w25, [x24]
+	cmp	w25, #' '
+	b.ne	chmod_mode_start
+	add	x24, x24, #1
+	b	skip_chmod_sp
+chmod_mode_start:
+	mov	x25, #0
+parse_chmod_octal:
+	ldrb	w26, [x24], #1
+	cmp	w26, #'0'
+	b.lt	parse_chmod_octal_done
+	cmp	w26, #'7'
+	b.gt	parse_chmod_octal_done
+	sub	w26, w26, #'0'
+	lsl	x25, x25, #3
+	add	x25, x25, x26
+	b	parse_chmod_octal
+parse_chmod_octal_done:
+	sub	x24, x24, #1
+skip_chmod_path_sp:
+	ldrb	w26, [x24]
+	cmp	w26, #' '
+	b.ne	chmod_path_ready
+	add	x24, x24, #1
+	b	skip_chmod_path_sp
+chmod_path_ready:
+	ldrb	w26, [x24]
+	cbz	w26, op_err
+	mov	x0, x24
+	mov	x1, x25
+	mov	x16, #SYS_chmod
+	svc	#0x80
+	b.cs	op_err
+	b	op_ok
+
+do_chown:
+	add	x24, x22, #5
+skip_chown_sp:
+	ldrb	w25, [x24]
+	cmp	w25, #' '
+	b.ne	chown_uid_start
+	add	x24, x24, #1
+	b	skip_chown_sp
+chown_uid_start:
+	mov	x25, #0
+	mov	x28, #10
+parse_chown_uid:
+	ldrb	w26, [x24], #1
+	cmp	w26, #'0'
+	b.lt	parse_chown_uid_done
+	cmp	w26, #'9'
+	b.gt	parse_chown_uid_done
+	sub	w26, w26, #'0'
+	mul	x25, x25, x28
+	add	x25, x25, x26
+	b	parse_chown_uid
+parse_chown_uid_done:
+	sub	x24, x24, #1
+skip_chown_gid_sp:
+	ldrb	w26, [x24]
+	cmp	w26, #' '
+	b.ne	chown_gid_start
+	add	x24, x24, #1
+	b	skip_chown_gid_sp
+chown_gid_start:
+	mov	x27, #0
+parse_chown_gid:
+	ldrb	w26, [x24], #1
+	cmp	w26, #'0'
+	b.lt	parse_chown_gid_done
+	cmp	w26, #'9'
+	b.gt	parse_chown_gid_done
+	sub	w26, w26, #'0'
+	mul	x27, x27, x28
+	add	x27, x27, x26
+	b	parse_chown_gid
+parse_chown_gid_done:
+	sub	x24, x24, #1
+skip_chown_path_sp:
+	ldrb	w26, [x24]
+	cmp	w26, #' '
+	b.ne	chown_path_ready
+	add	x24, x24, #1
+	b	skip_chown_path_sp
+chown_path_ready:
+	ldrb	w26, [x24]
+	cbz	w26, op_err
+	mov	x0, x24
+	mov	x1, x25
+	mov	x2, x27
+	mov	x16, #SYS_chown
+	svc	#0x80
+	b.cs	op_err
+	b	op_ok
+
+do_rm:
+	add	x24, x22, #2
+skip_rm_sp:
+	ldrb	w25, [x24]
+	cmp	w25, #' '
+	b.ne	rm_path_ready
+	add	x24, x24, #1
+	b	skip_rm_sp
+rm_path_ready:
+	ldrb	w25, [x24]
+	cbz	w25, op_err
+	mov	x0, x24
+	mov	x16, #SYS_unlink
+	svc	#0x80
+	b.cc	op_ok
+	mov	x0, x24
+	mov	x16, #SYS_rmdir
+	svc	#0x80
+	b.cs	op_err
+	b	op_ok
+
+do_kill:
+skip_kill_cmd_chars:
+	ldrb	w25, [x22], #1
+	cbz	w25, op_err
+	cmp	w25, #' '
+	b.ne	skip_kill_cmd_chars
+skip_kill_sp:
+	ldrb	w25, [x22]
+	cmp	w25, #' '
+	b.ne	kill_arg_start
+	add	x22, x22, #1
+	b	skip_kill_sp
+kill_arg_start:
+	ldrb	w25, [x22]
+	cbz	w25, op_err
+	mov	x25, #0
+	mov	x28, #10
+parse_kill_pid_loop:
+	ldrb	w26, [x22], #1
+	cmp	w26, #'0'
+	b.lt	parse_kill_pid_done
+	cmp	w26, #'9'
+	b.gt	parse_kill_pid_done
+	sub	w26, w26, #'0'
+	mul	x25, x25, x28
+	add	x25, x25, x26
+	b	parse_kill_pid_loop
+parse_kill_pid_done:
+	cbz	x25, op_err
+	mov	x0, x25
+	mov	x1, #9
+	mov	x16, #SYS_kill
+	svc	#0x80
+	b.cs	op_err
+	b	op_ok
+
+op_ok:
+	adr	x1, str_ok
+	mov	x2, #4
+	bl	sock_write
+	b	free_and_prompt
+
+op_err:
+	adr	x1, str_err
+	mov	x2, #5
 	bl	sock_write
 	b	free_and_prompt
 
@@ -525,20 +843,19 @@ sock_write:
 	ret
 
 str_prefix:
-	ldrb	w2, [x1]
+	mov	x4, x22
+1:
+	ldrb	w2, [x1], #1
 	cbz	w2, str_pfx_match
-	ldrb	w3, [x22]
+	ldrb	w3, [x4], #1
 	cbz	w3, str_pfx_nomatch
 	cmp	w2, w3
-	b.ne	str_pfx_nomatch
-	add	x1, x1, #1
-	add	x22, x22, #1
-	b	str_prefix
-str_pfx_match:
-	mov	x0, #0
-	ret
+	b.eq	1b
 str_pfx_nomatch:
 	mov	x0, #1
+	ret
+str_pfx_match:
+	mov	x0, #0
 	ret
 
 print_pid_line:
@@ -599,6 +916,12 @@ str_help_text:
 	.ascii	"  cat <file>    Display file contents\r\n"
 	.ascii	"  ps            List active processes (PIDs)\r\n"
 	.ascii	"  dmesg         Show /dev/klog kernel log\r\n"
+	.ascii	"  put <f> <s>   Upload <s> bytes to <f>\r\n"
+	.ascii	"  mkdir <dir>   Create directory\r\n"
+	.ascii	"  chmod <m> <f> Change file mode (octal)\r\n"
+	.ascii	"  chown <u> <g> Change owner/group\r\n"
+	.ascii	"  rm <path>     Remove file or directory\r\n"
+	.ascii	"  kill <pid>    Kill process (SIGKILL)\r\n"
 	.ascii	"  exec <bin>    Execute binary with fork/execve\r\n"
 	.ascii	"  reboot        Reboot the device\r\n"
 	.ascii	"  exit / quit   Disconnect\r\n"
@@ -653,6 +976,12 @@ str_dot:
 str_newline:
 	.ascii	"\r\n"
 
+str_ok:
+	.ascii	"OK\r\n"
+
+str_err:
+	.ascii	"ERR\r\n"
+
 str_klog_path:
 	.asciz	"/dev/klog"
 
@@ -667,6 +996,27 @@ str_cat_cmd:
 
 str_ps_cmd:
 	.asciz	"ps"
+
+str_put_cmd:
+	.asciz	"put"
+
+str_mkdir_cmd:
+	.asciz	"mkdir"
+
+str_chmod_cmd:
+	.asciz	"chmod"
+
+str_chown_cmd:
+	.asciz	"chown"
+
+str_rm_cmd:
+	.asciz	"rm"
+
+str_kill_cmd:
+	.asciz	"kill"
+
+str_killall_cmd:
+	.asciz	"killall"
 
 str_dmesg_cmd:
 	.asciz	"dmesg"

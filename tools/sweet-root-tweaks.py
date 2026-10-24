@@ -286,34 +286,82 @@ def patch_mobileactivationd(root_directory):
     nop = bytes.fromhex('1f2003d5')
     ret = bytes.fromhex('c0035fd6')
     main_nops = [
-        0x1ae38, 0x4f7ac, 0x4f828, 0x4f82c, 0x4f830, 0x4f834,
-        0x4f944, 0x4f9b8, 0x4fa18, 0x4fa20, 0x4fcec, 0x4fd28,
-        0x50470, 0x50718
+        0x1ae38, 0x4f7ac, 0x4f944, 0x4f9b8, 0x4fa18, 0x4fa20,
+        0x4fcec, 0x4fd28, 0x5042c, 0x50470, 0x5048c, 0x5049c, 0x50718
     ]
     for off in main_nops:
         data[off:off+4] = nop
+    data[0x4f828:0x4f82c] = bytes.fromhex('52bf0514')
+    data[0x4f82c:0x4f830] = nop
+    data[0x4f830:0x4f834] = nop
+    data[0x4f834:0x4f838] = nop
+    data[0x34324:0x34328] = bytes.fromhex('bdffff97')
+    data[0x34328:0x3432c] = bytes.fromhex('f40300aa')
     data[0x1bfde4:0x1bfde8] = bytes.fromhex('93fdff17')
     data[0x1bfdd8:0x1bfddc] = bytes.fromhex('a4fdff17')
-    for off in range(0x1bf424, 0x1bf56c, 4):
+    for off in range(0x1bf424, 0x1bf570, 4):
         data[off:off+4] = nop
     data[0x1bf424:0x1bf428] = ret
     sys_path_code = bytes.fromhex(
-        'f44fbea9fd7b01a9fd43009100088052d8020094f30300aae00313aa01088052'
-        '0203001060030094e00313aafd7b41a9f44fc2a8c0035fd6'
+        'f44fbea9'
+        'fd7b01a9'
+        'fd430091'
+        '00088052'
+        'd8020094'
+        'f30300aa'
+        'e00313aa'
+        'a1030010'
+        '02088052'
+        'd9020094'
+        'e00313aa'
+        'fd7b41a9'
+        'f44fc2a8'
+        'c0035fd6'
     )
     data[0x1bf430:0x1bf430+len(sys_path_code)] = sys_path_code
     sys_group_code = bytes.fromhex(
-        'f44fbea9fd7b01a9fd430091f40301aa00108052c9020094f30300aae00313aa'
-        '0110805222040010e30314aa50030094e00313aafd7b41a9f44fc2a8c0035fd6'
+        'f44fbea9'
+        'fd7b01a9'
+        'fd430091'
+        'f40301aa'
+        '9f0200f1'
+        '41000054'
+        '94050010'
+        '00108052'
+        'c6020094'
+        'f30300aa'
+        'e00313aa'
+        '61030010'
+        '62058052'
+        'c7020094'
+        '60ae0091'
+        'e10314aa'
+        '51030094'
+        'e00313aa'
+        'fd7b41a9'
+        'f44fc2a8'
+        'c0035fd6'
     )
     data[0x1bf468:0x1bf468+len(sys_group_code)] = sys_group_code
     str_sys = b'/private/var/containers/Data/System/com.apple.mobileactivationd\0'
-    data[0x1bf4b0:0x1bf4b0+len(str_sys)] = str_sys
-    str_grp = b'/private/var/containers/Shared/SystemGroup/%s\0'
-    data[0x1bf510:0x1bf510+len(str_grp)] = str_grp
+    data[0x1bf4c0:0x1bf4c0+len(str_sys)] = str_sys
+    str_pfx = b'/private/var/containers/Shared/SystemGroup/\0'
+    data[0x1bf500:0x1bf500+len(str_pfx)] = str_pfx
+    str_grp = b'systemgroup.com.apple.mobileactivationd\0'
+    data[0x1bf530:0x1bf530+len(str_grp)] = str_grp
+    fix_objects_code = bytes.fromhex(
+        '1f0000f1'
+        '00109a9a'
+        '7f0200f1'
+        '73129a9a'
+        '9f0200f1'
+        '94129a9a'
+        'ac40fa17'
+    )
+    data[0x1bf570:0x1bf570+len(fix_objects_code)] = fix_objects_code
     abort_entries = [
         0x1bf1cc, 0x1bf230, 0x1bf294, 0x1bf2f8, 0x1bf35c, 0x1bf3c0,
-        0x1bf424, 0x1bf4a4, 0x1bf508, 0x1bf56c, 0x1bf5c0, 0x1bf630, 0x1bf6a0
+        0x1bf424, 0x1bf5c0, 0x1bf630, 0x1bf6a0
     ]
     for off in abort_entries:
         data[off:off+4] = ret
