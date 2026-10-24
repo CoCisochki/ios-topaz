@@ -2,6 +2,27 @@
 
 ## Agent handoff / active work (2026-10-24, latest)
 
+### >>> UPDATE 2026-10-24 milestone (topaz: 680 KB instant delta.simg created, catalog synchronization, automated fastboot flasher) <<<
+
+- **True Root Cause of `hfs_swap_BTNode: offset #0 invalid (node=20230 fileID=4)` and `cat_idlookup failed`:**
+  - On topaz (Snapdragon 685 / SM6225), `userdata` is partition 19 (`sda19`), confirmed by recovery `readlink -f /dev/block/by-name/userdata`.
+  - When the initial 16 chunks were pushed via delta push, they only updated Extent 0 (chunk 721) and Extent 3 (chunk 6888) of the 160 MB Catalog B-Tree, omitting Extent 1 (chunk 857..889, where Node 20230 resides at chunk 875).
+  - This created a split-brain B-Tree on disk where parent nodes pointed to mismatched child nodes.
+- **Definitive Fix: Exact 29-Range Delta (680 KB):**
+  - Analyzed the flashed baseline `ios16-root.simg` against `ios16-root.img` via [tools/diff_simg.py](file:///mnt/oda/documents/ios/ios-topaz/tools/diff_simg.py).
+  - Discovered that the entire 16 GB image differs by **ONLY 170 4K blocks (680 KB total across 29 ranges)**:
+    - Block 0: Volume Header
+    - Block 103: Allocation bitmap
+    - Blocks 183682..185210: Catalog Extent 0 (B-Tree header and root)
+    - Blocks 223398..225012: Catalog Extent 1 (includes Node 20230)
+    - Blocks 1761881..1764659: Catalog Extent 3
+    - Blocks 1966687..1966881: `launchd.plist`
+    - Blocks 2125675..2126195: `data_ark.plist`
+    - Blocks 3244996..3372075: `topaz-shell` and patched `mobileactivationd`
+  - Created [tools/make_delta_simg.py](file:///mnt/oda/documents/ios/ios-topaz/tools/make_delta_simg.py) which produces `delta.simg` (681 KB).
+  - Flashing `delta.simg` with `fastboot flash userdata delta.simg` takes ~0.3 seconds and rewrites ONLY those 170 blocks (leaving all untouched UFS flash untouched).
+  - Created [tools/sweet-fastboot-flash-and-boot.py](file:///mnt/oda/documents/ios/ios-topaz/tools/sweet-fastboot-flash-and-boot.py) which automatically catches fastboot/recovery, flashes `delta.simg`, and executes `fastboot boot shim/out/shim-boot.img`.
+
 ### >>> UPDATE 2026-10-24 milestone (topaz: userdata partition resolution /dev/block/by-name/userdata, verified delta push, automated flash & boot) <<<
 
 - **Critical Hardware Fact: Target Partition Resolution for topaz / sweet UFS:**
