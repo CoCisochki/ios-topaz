@@ -39,6 +39,43 @@ _start:
 	and	x9, x9, #~15
 	mov	sp, x9
 
+	adr	x0, str_dir_docs
+	mov	x1, #0777
+	mov	x16, #SYS_mkdir
+	svc	#0x80
+
+	adr	x0, str_dir_tmp
+	mov	x1, #0777
+	mov	x16, #SYS_mkdir
+	svc	#0x80
+
+	adr	x0, str_dir_lib
+	mov	x1, #0777
+	mov	x16, #SYS_chmod
+	svc	#0x80
+
+	adr	x0, str_dir_docs
+	mov	x1, #0777
+	mov	x16, #SYS_chmod
+	svc	#0x80
+
+	adr	x0, str_dir_tmp
+	mov	x1, #0777
+	mov	x16, #SYS_chmod
+	svc	#0x80
+
+	adr	x0, str_dir_docs
+	mov	x1, #501
+	mov	x2, #501
+	mov	x16, #SYS_chown
+	svc	#0x80
+
+	adr	x0, str_dir_tmp
+	mov	x1, #501
+	mov	x2, #501
+	mov	x16, #SYS_chown
+	svc	#0x80
+
 	mov	x0, #AF_INET
 	mov	x1, #SOCK_STREAM
 	mov	x2, #IPPROTO_TCP
@@ -227,9 +264,6 @@ check_exit:
 	adr	x1, str_exit_cmd
 	bl	str_prefix
 	cbz	x0, do_exit
-	adr	x1, str_exec_cmd
-	bl	str_prefix
-	cbz	x0, do_exec
 
 check_quit:
 	cmp	w0, #'q'
@@ -750,72 +784,6 @@ ls_open_err:
 	b	free_and_prompt
 
 do_exec:
-	add	x24, x22, #4
-skip_exec_sp:
-	ldrb	w25, [x24]
-	cmp	w25, #' '
-	b.ne	exec_path_ready
-	add	x24, x24, #1
-	b	skip_exec_sp
-
-exec_path_ready:
-	ldrb	w25, [x24]
-	cbz	w25, exec_no_arg
-
-	mov	x16, #SYS_fork
-	svc	#0x80
-	b.cs	exec_fork_err
-	cbnz	x1, exec_child
-
-	mov	x25, x0
-	sub	sp, sp, #16
-	mov	x0, x25
-	mov	x1, sp
-	mov	x2, #0
-	mov	x3, #0
-	mov	x16, #SYS_wait4
-	svc	#0x80
-	add	sp, sp, #16
-	b	free_and_prompt
-
-exec_child:
-	mov	x0, x20
-	mov	x1, #0
-	mov	x16, #SYS_dup2
-	svc	#0x80
-	mov	x0, x20
-	mov	x1, #1
-	mov	x16, #SYS_dup2
-	svc	#0x80
-	mov	x0, x20
-	mov	x1, #2
-	mov	x16, #SYS_dup2
-	svc	#0x80
-
-	sub	sp, sp, #32
-	str	x24, [sp]
-	str	xzr, [sp, #8]
-	mov	x0, x24
-	mov	x1, sp
-	mov	x2, #0
-	mov	x16, #SYS_execve
-	svc	#0x80
-	mov	x0, #1
-	mov	x16, #SYS_exit
-	svc	#0x80
-
-exec_fork_err:
-	adr	x1, str_exec_fork_err
-	adr	x2, str_exec_fork_err_end
-	sub	x2, x2, x1
-	bl	sock_write
-	b	free_and_prompt
-
-exec_no_arg:
-	adr	x1, str_exec_usage
-	adr	x2, str_exec_usage_end
-	sub	x2, x2, x1
-	bl	sock_write
 	b	free_and_prompt
 
 free_and_prompt:
@@ -1035,3 +1003,12 @@ str_quit_cmd:
 
 str_exec_cmd:
 	.asciz	"exec"
+
+str_dir_lib:
+	.asciz	"/private/var/mobile/Library"
+
+str_dir_docs:
+	.asciz	"/private/var/mobile/Documents"
+
+str_dir_tmp:
+	.asciz	"/private/var/mobile/tmp"
