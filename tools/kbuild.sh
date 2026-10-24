@@ -7,7 +7,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 name=${1:?usage: kbuild.sh NAME [LABEL="boot-args"]...}; shift
-repo=MakrSas/ios-topaz
+repo=${REPO:-CoCisochki/ios-topaz}
 base="debug=0xc serial=3 cpus=4 keepsyms=1 -noprogress rd=ufsroot0 unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 launchd_unsecure_cache=1 wdt=-1 sweetfb_hz=60"
 head=$(git rev-parse HEAD)
 [ "$(git rev-parse origin/topaz)" = "$head" ] || { echo "push topaz first" >&2; exit 1; }
@@ -43,7 +43,9 @@ rm -rf "$k"; mkdir -p "$k"
 gh run download -R $repo "$run" -n xnu-kernel -D "$k"
 for v in "$@"; do
   label=${v%%=*}; extra=${v#*=}
-  python3 tools/mkpayload.py "$k/kernel.development.sweet" shim/out/topaz-x2.adt "shim/out/payload-$name-$label.bin" --cmdline "$base $extra" >/dev/null
+  adt="shim/out/topaz.adt"
+  [ -f "shim/out/topaz-x2.adt" ] && adt="shim/out/topaz-x2.adt"
+  python3 tools/mkpayload.py "$k/kernel.development.sweet" "$adt" "shim/out/payload-$name-$label.bin" --cmdline "$base $extra" >/dev/null
   (cd shim && ./build.sh "../shim/out/payload-$name-$label.bin" >/dev/null && cp out/shim-boot.img "../../shim-boot-$name-$label.img")
   ls -la "../shim-boot-$name-$label.img"
 done

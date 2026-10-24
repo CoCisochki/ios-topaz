@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Sat, 24 Oct 2026 19:45:00 +0300
+Subject: [PATCH] topaz: fix hid test spam, bind home to power, sandbox fallback and surface allocation
+
+---
+ bsd/kern/topaz_sandbox_container.c    | 12 ++++++++++--
+ iokit/Kernel/arm/SweetFramebuffer.cpp |  5 ++++-
+ iokit/Kernel/arm/SweetSurface.cpp     |  4 ----
+ 3 files changed, 14 insertions(+), 7 deletions(-)
+
+diff --git a/bsd/kern/topaz_sandbox_container.c b/bsd/kern/topaz_sandbox_container.c
+index 4533ffd..1234567 100644
+--- a/bsd/kern/topaz_sandbox_container.c
++++ b/bsd/kern/topaz_sandbox_container.c
+@@ -91,7 +91,9 @@ sweet_sandbox_container_path(user_addr_t arg)
+ 	task = proc_task(p);
+ 	if (user_stack == 0 || argslen == 0 || task == TASK_NULL) {
+ 		proc_rele(p);
+-		return 0;
++		const char *fallback = "/private/var/mobile";
++		size_t flen = strlen(fallback);
++		return flen < args.size ? copyout(fallback, args.buffer, flen + 1) : ENAMETOOLONG;
+ 	}
+ 	/* the same way as sysctl_procargsx(): the task keeps the map alive once the process is let go */
+ 	task_reference(task);
+@@ -127,6 +129,12 @@ sweet_sandbox_container_path(user_addr_t arg)
+ 			break;
+ 		}
+ 	}
++	if (s >= end) {
++		const char *fallback = "/private/var/mobile";
++		size_t flen = strlen(fallback);
++		error = flen < args.size ? copyout(fallback, args.buffer, flen + 1) : ENAMETOOLONG;
++	}
+ 	kmem_free(kernel_map, strings, strings_size);
+ 	return error;
+ }
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 87c04a8..2345678 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -1004,7 +1004,7 @@ SweetHIDButtons::testFired(OSObject *owner, IOTimerEventSource *sender)
+ 	 */
+ 	bool press = (self->fTestCount & 1) == 0;
+ 	self->key(kHIDUsage_Csmr_Menu, press);
+-	if (++self->fTestCount < 60) {
++	if (++self->fTestCount < 6) {
+ 		sender->setTimeoutMS(press ? 100 : self->fTestSecs * 1000);
+ 	}
+ }
+@@ -1124,6 +1124,9 @@ sweet_hid_key(int key, int down)
+ 
+ 	if (gSweetButtons && key >= 0 && key < (int)(sizeof(usages) / sizeof(usages[0]))) {
+ 		gSweetButtons->key(usages[key], down != 0);
++		if (key == 0) {
++			gSweetButtons->key(kHIDUsage_Csmr_Menu, down != 0);
++		}
+ 	}
+ }
+ 
+diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
+index 7f90c56..3456789 100644
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -1092,10 +1092,6 @@ IOSurfaceRootUserClient::create(IOExternalMethodArguments *args)
+ 					mem = sweet_res_take(take);
+ 				}
+ 			}
+-			if (mem == NULL && gpu_low && take <= (16u << 20)) {
+-				mem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+-				    kIODirectionInOut | kIOMemoryKernelUserShared | kIOMemoryPhysicallyContiguous, take,
+-				    0x0000000FFFFFC000ull);
+-			}
+ 			if (mem == NULL) {
+ 				mem = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+ 				    kIODirectionInOut | kIOMemoryKernelUserShared, take, SWEET_UPAGE);
+-- 
