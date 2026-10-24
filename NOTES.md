@@ -21,6 +21,19 @@
      - Created `Documents` and `tmp`, set permissions `0777` and ownership `501:501` across `Library`, `Documents`, and `tmp`.
      - Added automatic creation and `0777` `501:501` permissions in `tools/sweet-shell.S` at `_start`.
      - Removed `do_exec` fork path in `sweet-shell.S` to eliminate zombie processes.
+  5. **Artifacts & Builds (VERIFIED):**
+     - Commit: `41e01c438dc77f40e0764f14354b4376b562de55`.
+     - CI Run: `40116148770` completed successfully (green).
+     - Downloaded `kernel.development.sweet` (18,019,240 bytes).
+     - Assembled `shim/out/payload.bin` (17,440,256 bytes) with `sweethidtest=15`.
+     - Built `shim/out/shim-boot.img` (17,633,280 bytes).
+     - Computed filesystem delta (`tools/sweet-delta-push.py diff`): 62 dirty chunks (62.00 MB across 13 ranges).
+     - Unmounted `/mnt/iosroot` cleanly.
+  6. **Next Steps to Boot & Verify:**
+     - Step 1: Boot phone into Recovery (TWRP / OrangeFox) with USB ADB.
+     - Step 2: Run `python3 tools/sweet-delta-push.py push` to write 62 MB delta to `/dev/block/by-name/userdata`.
+     - Step 3: Run `adb reboot bootloader` -> `fastboot boot shim/out/shim-boot.img`.
+     - Step 4: Verify Settings -> General -> About opens instantly without freezing, and app launches do not crash.
 
 ### >>> UPDATE 2026-10-24 MILESTONE: SPRINGBOARD UI LIVE ON OLED PANEL, TOUCH WORKING, PATCH 0954 APPLIED (CI RUN 40113112185) <<<
 
