@@ -4,15 +4,15 @@ Date: Sat, 24 Oct 2026 20:15:00 +0300
 Subject: [PATCH] topaz: disable scanout contiguous buffers and harden sandbox fallback
 
 ---
- bsd/kern/topaz_sandbox_container.c    | 37 ++++++++++++++-------------
- iokit/Kernel/arm/SweetSurface.cpp     |  4 +++
- 2 files changed, 24 insertions(+), 17 deletions(-)
+ bsd/kern/topaz_sandbox_container.c    | 32 ++++++++++++++++++++-------
+ iokit/Kernel/arm/SweetSurface.cpp     |  3 +++
+ 2 files changed, 27 insertions(+), 8 deletions(-)
 
 diff --git a/bsd/kern/topaz_sandbox_container.c b/bsd/kern/topaz_sandbox_container.c
-index 1234567..2345678 100644
+index 4533ffd..294433b 100644
 --- a/bsd/kern/topaz_sandbox_container.c
 +++ b/bsd/kern/topaz_sandbox_container.c
-@@ -53,6 +53,16 @@
+@@ -20,6 +20,17 @@ int sweet_sandbox_container_path(user_addr_t arg);
  #define SANDBOX_SYSCALL_CONTAINER_PATH  4
  #define SANDBOX_CONTAINER_VARIABLE      "CFFIXED_USER_HOME="
  
@@ -30,17 +30,14 @@ index 1234567..2345678 100644
  int
  sweet_sandbox_container_path(user_addr_t arg)
  {
-@@ -79,18 +89,19 @@ sweet_sandbox_container_path(user_addr_t arg)
+@@ -46,20 +57,23 @@ sweet_sandbox_container_path(user_addr_t arg)
  	if (error) {
  		return error;
  	}
--	p = proc_find((int)args.pid);
 +	if (args.pid <= 0) {
-+		p = current_proc();
-+		proc_ref(p);
-+	} else {
-+		p = proc_find((int)args.pid);
++		return sweet_sandbox_fallback(args.buffer, args.size);
 +	}
+ 	p = proc_find((int)args.pid);
  	if (p == PROC_NULL) {
 -		return ESRCH;
 +		return sweet_sandbox_fallback(args.buffer, args.size);
@@ -55,13 +52,12 @@ index 1234567..2345678 100644
  	task = proc_task(p);
  	if (user_stack == 0 || argslen == 0 || task == TASK_NULL) {
  		proc_rele(p);
--		const char *fallback = "/private/var/mobile";
--		size_t flen = strlen(fallback);
--		return flen < args.size ? copyout(fallback, args.buffer, flen + 1) : ENAMETOOLONG;
+-		return 0;
 +		return sweet_sandbox_fallback(args.buffer, args.size);
  	}
+ 	/* the same way as sysctl_procargsx(): the task keeps the map alive once the process is let go */
  	task_reference(task);
- 	proc_rele(p);
+@@ -67,12 +81,12 @@ sweet_sandbox_container_path(user_addr_t arg)
  	map = get_task_map_reference(task);
  	task_deallocate(task);
  	if (map == VM_MAP_NULL) {
@@ -76,14 +72,11 @@ index 1234567..2345678 100644
  	}
  	if (vm_map_copyin(map, (vm_map_address_t)(user_stack - strings_size), strings_size, FALSE, &copy) != KERN_SUCCESS) {
  		copy = NULL;
- 	}
- 	vm_map_deallocate(map);
- 	if (copy == NULL || vm_map_copy_overwrite(kernel_map, strings, copy, strings_size, FALSE) != KERN_SUCCESS) {
- 		if (copy != NULL) {
+@@ -83,10 +97,11 @@ sweet_sandbox_container_path(user_addr_t arg)
  			vm_map_copy_discard(copy);
  		}
  		kmem_free(kernel_map, strings, strings_size);
--		return 0;
+-		return 0;                       /* the process is on its way out, or has unmapped its own stack */
 +		return sweet_sandbox_fallback(args.buffer, args.size);
  	}
  
@@ -92,17 +85,9 @@ index 1234567..2345678 100644
  	for (s = end - argslen; s < end; s += len + 1) {
  		len = strnlen(s, end - s);
  		if (len > prefix_len && s + len < end && strncmp(s, SANDBOX_CONTAINER_VARIABLE, prefix_len) == 0) {
- 			s += prefix_len;
- 			len -= prefix_len;
- 			error = len < args.size ? copyout(s, args.buffer, len + 1) : ENAMETOOLONG;
- 			break;
+@@ -97,5 +112,8 @@ sweet_sandbox_container_path(user_addr_t arg)
  		}
  	}
--	if (s >= end) {
--		const char *fallback = "/private/var/mobile";
--		size_t flen = strlen(fallback);
--		error = flen < args.size ? copyout(fallback, args.buffer, flen + 1) : ENAMETOOLONG;
--	}
  	kmem_free(kernel_map, strings, strings_size);
 +	if (error != 0) {
 +		return sweet_sandbox_fallback(args.buffer, args.size);
@@ -110,10 +95,10 @@ index 1234567..2345678 100644
  	return error;
  }
 diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
-index 3456789..456789a 100644
+index e17297a..aec0195 100644
 --- a/iokit/Kernel/arm/SweetSurface.cpp
 +++ b/iokit/Kernel/arm/SweetSurface.cpp
-@@ -136,6 +136,8 @@
+@@ -133,6 +133,8 @@ sweet_scanout_set_geometry(uint32_t w1, uint32_t h1, uint32_t w2, uint32_t h2)
  static bool
  sweet_scanout_eligible(const SweetSurface *s)
  {
@@ -122,7 +107,7 @@ index 3456789..456789a 100644
  	if (sweet_scanout_enabled < 0) {
  		int on = 1;
  		PE_parse_boot_argn("sweetfb_direct", &on, sizeof(on));
-@@ -188,6 +190,8 @@
+@@ -176,6 +178,7 @@ static IOBufferMemoryDescriptor *sweet_res_wait[2 * SWEET_RES_COUNT];
  static void
  sweet_res_fill(void)
  {

@@ -2,6 +2,20 @@
 
 ## Agent handoff / active work (2026-10-24, latest)
 
+### >>> UPDATE 2026-10-24 MILESTONE: FIX SANDBOX REFS PANIC ("CORE ZLIB MEMORY"), PROPER FALLBACK (PATCH 0955 RESPIN) <<<
+
+- **Root Cause of Early Boot Panic ("core zlib memory"):**
+  1. **Panic in Syscall Exit / Process Refcount:**
+     - The first revision of `0955` modified `sweet_sandbox_container_path` to handle `args.pid <= 0` by querying `current_proc()`, calling `proc_ref(p)` with missing argument count, and decrementing the process refcount via `proc_rele(p)`.
+     - On syscall AST return, XNU asserted `uthread_assert_zero_proc_refcount` or failed on invalid proc refcount bits, causing kernel panic.
+     - On panic, `kdp_core` initialized `zlib_stage_initialize` and output `printf("kdp_core zlib memory 0x%lx\n", stage->kos_data_size)`. This displayed `kdp_core zlib memory` below `iBoot version: topaz-shim` on the physical OLED screen.
+     - Because panic halted early execution before the 10-30s `sweet_log_secs` periodic flush, `sweet_log_thread` never wrote new blocks to disk, leaving flush #233 in userdata.
+  2. **Resolution in Patch 0955:**
+     - Fixed `topaz_sandbox_container.c`: If `args.pid <= 0`, immediately return `sweet_sandbox_fallback(args.buffer, args.size)`.
+     - Completely eliminated any calls to `current_proc()`, `proc_ref()`, or `proc_rele()` on self.
+     - Any lookup failure, missing process (`PROC_NULL`), invalid version, missing stack/args, or unmapped memory falls back cleanly to `/private/var/mobile`.
+     - Preserved `SweetSurface.cpp` zero contiguous scanout bypass (`sweet_scanout_eligible -> false`, `sweet_res_fill -> no-op`).
+
 ### >>> UPDATE 2026-10-24 MILESTONE: HOTFIX FOR "ABOUT" SETTINGS, ZERO CONTIGUOUS SURFACES, COMMCENTER UNBLOCKED, FULL SANDBOX FALLBACK (PATCH 0955) <<<
 
 - **Root Causes Identified & Resolved:**
