@@ -4,6 +4,16 @@
 
 ### >>> UPDATE 2026-10-24 milestone (topaz: mobileactivationd nil array exception fix, instant Live-Push / Delta-Push architecture, topaz-shell fs tools) <<<
 
+- **Root Cause of `CRASH mobileactivation[143] sig 11 pc 0x1836a7764 far 0x20` Solved:**
+  - `pc = 0x1836a7764` is unslid `0x1800bf764` (`_objc_autoreleaseReturnValue + 64` in `/usr/lib/libobjc.A.dylib`).
+  - `bt[0] = 0x1004777e0` is `0x10004f7e0` in `mobileactivationd`, immediately after `10004f7dc: bl 0x1000342c8`.
+  - In `0x1000342c8`:
+    - Happy path executes `100034318: mov x0, x19; bl 0x1001bfef8 (free); b 0x100034328`.
+    - At `0x100034328`, the original code is `mov x0, x20` to restore the retained `NSString*` into `x0` for `_objc_autoreleaseReturnValue`.
+    - Our previous patch had replaced `0x34324..0x3432c` with `bl 0x100034218; mov x20, x0`, overwriting `0x34328` with `mov x20, x0`!
+    - Consequently, `x0` was NOT restored to the `NSString*` and retained the return value of `free()`, causing `_objc_autoreleaseReturnValue(0)` to fault at `far 0x20`.
+  - Fix applied: restored `0x100034324` to `mov x20, #0` (`140080d2`) and `0x100034328` to `mov x0, x20` (`e00314aa`). `_objc_autoreleaseReturnValue` now receives the valid `NSString*` from `x20`. CodeDirectory verified 572/572 match.
+
 - **Root Cause of `attempt to insert nil object from objects[1]` at 0x10004f860 Solved:**
   - `main()` collects 4 container path `NSString*` objects into stack array `sp + 0x1f0`:
     - `objects[0] = x26`: System container (`com.apple.mobileactivationd`), returned by `0x100034218`.

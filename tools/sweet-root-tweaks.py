@@ -295,8 +295,8 @@ def patch_mobileactivationd(root_directory):
     data[0x4f82c:0x4f830] = nop
     data[0x4f830:0x4f834] = nop
     data[0x4f834:0x4f838] = nop
-    data[0x34324:0x34328] = bytes.fromhex('bdffff97')
-    data[0x34328:0x3432c] = bytes.fromhex('f40300aa')
+    data[0x34324:0x34328] = bytes.fromhex('140080d2')
+    data[0x34328:0x3432c] = bytes.fromhex('e00314aa')
     data[0x1bfde4:0x1bfde8] = bytes.fromhex('93fdff17')
     data[0x1bfdd8:0x1bfddc] = bytes.fromhex('a4fdff17')
     for off in range(0x1bf424, 0x1bf570, 4):
