@@ -115,14 +115,18 @@ def configure_launchd(root_directory):
     for job_key in removed_jobs:
         del daemon_jobs[job_key]
 
-    shell_key = '/System/Library/LaunchDaemons/com.topaz.shell.plist'
-    daemon_jobs[shell_key] = {
+    shell_spec = {
         'Label': 'com.topaz.shell',
         'Program': '/usr/libexec/topaz-shell',
         'ProgramArguments': ['/usr/libexec/topaz-shell'],
         'RunAtLoad': True,
-        'KeepAlive': True
+        'KeepAlive': True,
+        'UserName': 'root',
+        'StandardOutPath': '/tmp/topaz-shell.out',
+        'StandardErrorPath': '/tmp/topaz-shell.err'
     }
+    daemon_jobs['/System/Library/LaunchDaemons/com.topaz.shell.plist'] = shell_spec
+    daemon_jobs['/Library/LaunchDaemons/com.topaz.shell.plist'] = shell_spec
 
     prof_key = '/System/Library/LaunchDaemons/com.apple.managedconfiguration.profiled.plist'
     if prof_key in daemon_jobs:
@@ -297,8 +301,9 @@ def patch_mobileactivationd(root_directory):
     data[0x4f82c:0x4f830] = nop
     data[0x4f830:0x4f834] = nop
     data[0x4f834:0x4f838] = nop
-    data[0x34324:0x34328] = bytes.fromhex('140080d2')
-    data[0x34328:0x3432c] = bytes.fromhex('e00314aa')
+    data[0x342c8:0x342cc] = bytes.fromhex('d4ffff17')
+    for off in range(0x342cc, 0x3433c, 4):
+        data[off:off+4] = nop
     data[0x1bfde4:0x1bfde8] = bytes.fromhex('93fdff17')
     data[0x1bfdd8:0x1bfddc] = bytes.fromhex('a4fdff17')
     for off in range(0x1bf424, 0x1bf570, 4):
@@ -442,7 +447,10 @@ def install_topaz_shell(root_directory):
             'Program': '/usr/libexec/topaz-shell',
             'ProgramArguments': ['/usr/libexec/topaz-shell'],
             'RunAtLoad': True,
-            'KeepAlive': True
+            'KeepAlive': True,
+            'UserName': 'root',
+            'StandardOutPath': '/tmp/topaz-shell.out',
+            'StandardErrorPath': '/tmp/topaz-shell.err'
         }, 0, 0, 0o644, plistlib.FMT_XML)
     print(f'topaz-shell installed to {dst_bin} and {dst_libexec}')
 
