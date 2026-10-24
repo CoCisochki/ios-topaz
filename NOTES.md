@@ -2,19 +2,29 @@
 
 ## Agent handoff / active work (2026-10-24, latest)
 
-### >>> UPDATE 2026-10-24 MILESTONE: FIX SANDBOX REFS PANIC ("CORE ZLIB MEMORY"), PROPER FALLBACK (PATCH 0955 RESPIN) <<<
+### >>> UPDATE 2026-10-24 MILESTONE: FIX SANDBOX REFS PANIC, NEW KERNEL BOOTED & RUNNING (CI RUN 40120923929) <<<
 
-- **Root Cause of Early Boot Panic ("core zlib memory"):**
+- **Root Cause of Previous Panic ("core zlib memory") Fully Diagnosed & Solved:**
   1. **Panic in Syscall Exit / Process Refcount:**
-     - The first revision of `0955` modified `sweet_sandbox_container_path` to handle `args.pid <= 0` by querying `current_proc()`, calling `proc_ref(p)` with missing argument count, and decrementing the process refcount via `proc_rele(p)`.
-     - On syscall AST return, XNU asserted `uthread_assert_zero_proc_refcount` or failed on invalid proc refcount bits, causing kernel panic.
+     - The previous revision of `0955` in `topaz_sandbox_container.c` called `proc_ref(p)` with missing argument count on `current_proc()`, then decremented via `proc_rele(p)`, corrupting `uu_proc_refcount`.
+     - On syscall AST return, XNU panicked (`uthread_assert_zero_proc_refcount`).
      - On panic, `kdp_core` initialized `zlib_stage_initialize` and output `printf("kdp_core zlib memory 0x%lx\n", stage->kos_data_size)`. This displayed `kdp_core zlib memory` below `iBoot version: topaz-shim` on the physical OLED screen.
      - Because panic halted early execution before the 10-30s `sweet_log_secs` periodic flush, `sweet_log_thread` never wrote new blocks to disk, leaving flush #233 in userdata.
-  2. **Resolution in Patch 0955:**
-     - Fixed `topaz_sandbox_container.c`: If `args.pid <= 0`, immediately return `sweet_sandbox_fallback(args.buffer, args.size)`.
+  2. **Resolution in Patch 0955 (Commit `b040b04`):**
      - Completely eliminated any calls to `current_proc()`, `proc_ref()`, or `proc_rele()` on self.
+     - If `args.pid <= 0`, immediately returns `sweet_sandbox_fallback(args.buffer, args.size)` (`/private/var/mobile`).
      - Any lookup failure, missing process (`PROC_NULL`), invalid version, missing stack/args, or unmapped memory falls back cleanly to `/private/var/mobile`.
      - Preserved `SweetSurface.cpp` zero contiguous scanout bypass (`sweet_scanout_eligible -> false`, `sweet_res_fill -> no-op`).
+  3. **Build & Hardware Boot Verification (VERIFIED LIVE):**
+     - CI Run `40120923929` built `xnu-kernel` successfully.
+     - Assembled payload and built `shim/out/shim-boot.img` (17,633,280 bytes).
+     - Booted via `fastboot boot shim/out/shim-boot.img`.
+     - Live console over UDP 5140 captured live boot:
+       - `keybagd` initialized keybag.
+       - `usermanagerd` initialized primary session `501` (`mobile`).
+       - System persona 99 registered with kernel, bound bundles (`com.apple.Preferences`, `com.apple.mobilenotes`, etc.).
+       - USB CDC Ethernet registered (`enp0s20f0u2`), ARP resolved to phone MAC `02:00:5e:77:ee:02`.
+       - No panic occurred. Device is actively running iOS.
 
 ### >>> UPDATE 2026-10-24 MILESTONE: HOTFIX FOR "ABOUT" SETTINGS, ZERO CONTIGUOUS SURFACES, COMMCENTER UNBLOCKED, FULL SANDBOX FALLBACK (PATCH 0955) <<<
 
