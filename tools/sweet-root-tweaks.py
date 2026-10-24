@@ -130,6 +130,18 @@ def configure_launchd(root_directory):
         if os.path.exists(acct_path):
             daemon_jobs[acct_key] = read_plist(acct_path)
             daemon_jobs[acct_key]['ThrottleInterval'] = 5
+
+    act_key = '/System/Library/LaunchDaemons/com.apple.mobileactivationd.plist'
+    if act_key in daemon_jobs:
+        act_env = daemon_jobs[act_key].setdefault('EnvironmentVariables', {})
+        act_env['CFFIXED_USER_HOME'] = '/private/var/containers/Data/System/com.apple.mobileactivationd'
+
+    act_path = os.path.join(root_directory, 'System/Library/LaunchDaemons/com.apple.mobileactivationd.plist')
+    if os.path.exists(act_path):
+        act_plist = read_plist(act_path)
+        act_env = act_plist.setdefault('EnvironmentVariables', {})
+        act_env['CFFIXED_USER_HOME'] = '/private/var/containers/Data/System/com.apple.mobileactivationd'
+        write_plist(act_path, act_plist, 0, 0, 0o644)
         
     write_plist(launchd_path, launchd_plist, file_stat.st_uid, file_stat.st_gid, file_stat.st_mode & 0o7777)
     print(f'launchd.plist: {renamed_panics} panic flags renamed, {len(removed_jobs)} unnecessary daemons removed, com.topaz.shell added')
@@ -223,14 +235,22 @@ def locate_container(root_directory, container_category, bundle_identifier):
 def seed_mobileactivation(root_directory):
     activation_container = locate_container(root_directory, 'Data/System', 'com.apple.mobileactivationd')
     if activation_container is None:
-        print('warning: mobileactivationd container absent; data_ark not seeded')
-        return
+        activation_container = os.path.join(root_directory, 'private/var/containers/Data/System/com.apple.mobileactivationd')
+    os.makedirs(activation_container, exist_ok=True)
+    try:
+        os.chown(activation_container, 0, 0)
+        os.chmod(activation_container, 0o777)
+    except PermissionError:
+        pass
+    meta_path = os.path.join(activation_container, '.com.apple.mobile_container_manager.metadata.plist')
+    if not os.path.exists(meta_path):
+        write_plist(meta_path, {'MCMMetadataIdentifier': 'com.apple.mobileactivationd'}, 0, 0, 0o644, plistlib.FMT_XML)
         
     internal_storage = os.path.join(activation_container, 'Library/internal')
     os.makedirs(internal_storage, exist_ok=True)
     try:
         os.chown(internal_storage, 0, 0)
-        os.chmod(internal_storage, 0o755)
+        os.chmod(internal_storage, 0o777)
     except PermissionError:
         pass
     
@@ -248,8 +268,33 @@ def seed_mobileactivation(root_directory):
         '-DataMigrationCompleted': True,
         '-PreSydroDataMigrationCompleted': True,
     }
-    write_plist(os.path.join(internal_storage, 'data_ark.plist'), ark_payload, 0, 0, 0o644)
+    write_plist(os.path.join(internal_storage, 'data_ark.plist'), ark_payload, 0, 0, 0o666)
     print(f'data ark written to {internal_storage}')
+
+def patch_mobileactivationd(root_directory):
+    bin_path = os.path.join(root_directory, 'usr/libexec/mobileactivationd')
+    if not os.path.exists(bin_path):
+        return
+    stat_info = os.stat(bin_path)
+    with open(bin_path, 'rb') as f:
+        data = bytearray(f.read())
+    patches = [
+        (0x50470, bytes.fromhex('1f2003d5')),
+        (0x50718, bytes.fromhex('1f2003d5')),
+        (0x1ae38, bytes.fromhex('1f2003d5')),
+        (0x1bf3b4, bytes.fromhex('fd7b41a9 f44fc2a8 c0035fd6')),
+        (0x1bf6f8, bytes.fromhex('fd7b41a9 f44fc2a8 c0035fd6')),
+    ]
+    for off, patch_bytes in patches:
+        data[off:off+len(patch_bytes)] = patch_bytes
+    with open(bin_path, 'wb') as f:
+        f.write(data)
+    try:
+        os.chown(bin_path, stat_info.st_uid, stat_info.st_gid)
+        os.chmod(bin_path, stat_info.st_mode)
+    except PermissionError:
+        pass
+    print('mobileactivationd binary patched')
 
 def configure_audio_stack(root_directory):
     virtual_audio_path = os.path.join(root_directory, 'Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin')
@@ -324,6 +369,7 @@ def main():
     ensure_containers(ios_root)
     ensure_system_directories(ios_root)
     seed_mobileactivation(ios_root)
+    patch_mobileactivationd(ios_root)
     configure_audio_stack(ios_root)
     install_topaz_shell(ios_root)
     stage_system_applications(ios_root)

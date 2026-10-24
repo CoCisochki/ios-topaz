@@ -1,6 +1,41 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
-## Agent handoff / active work (2026-10-23, latest)
+## Agent handoff / active work (2026-10-24, latest)
+
+### >>> UPDATE 2026-10-24 milestone (topaz: mobileactivationd crash resolved, CFFIXED_USER_HOME, binary patch, lsd t1 usermanagerd analysis, 16-char process names) <<<
+
+- **Root Cause of mobileactivationd Trap (pc 0x1001bf3bc, bt 0x100050674) Solved:**
+  - Detailed disassembly of `/usr/libexec/mobileactivationd`:
+    - `bt[0] = 0x100050674` is inside `main()` right after `0x100050670: bl 0x1001bf35c`.
+    - `0x1001bf35c` is the fatal abort handler that logs `"Migration failed."` and executes `brk #1` at `0x1001bf3bc`.
+    - In `main()`, `0x100050454` calls `0x10001ab98` (data migration check), followed by `0x100050470: tbz w19, #0x0, 0x100050668`. If `0x10001ab98` fails, it branches to `0x100050668 -> 0x100050670: bl 0x1001bf35c -> 0x1001bf3bc: brk #1`.
+    - `0x10001ab98` uses `dispatch_once` with block `0x10001ac5c`. `0x10001ace4: cbz x0` checks `data_ark` (`x23`).
+    - `data_ark` was initialized in `main()` via `0x10004fd00 -> 0x100034724 -> 0x100034218`, calling `_container_system_path_for_identifier(NULL, &error)` (Sandbox op 4).
+    - Under patch 0936 (`topaz_sandbox_container.c`), Sandbox op 4 queries the process environment for `CFFIXED_USER_HOME=`.
+    - Because `com.apple.mobileactivationd.plist` and `launchd.plist` did not supply `CFFIXED_USER_HOME`, container path resolution failed, `data_ark` was invalid, triggering `"Migration failed."` and `brk #1`.
+  - **Double Defense Fix Applied:**
+    1. Set `EnvironmentVariables: {'CFFIXED_USER_HOME': '/private/var/containers/Data/System/com.apple.mobileactivationd'}` in `launchd.plist` and `System/Library/LaunchDaemons/com.apple.mobileactivationd.plist`. Set container permissions to `0777` and `data_ark.plist` to `0666` so user `mobile` (501) can freely read and write.
+    2. Binary patched `/usr/libexec/mobileactivationd`:
+       - `0x100050470`: NOPed (`36 00 0f d3` -> `1f 20 03 d5`)
+       - `0x100050718`: NOPed (`36 00 00 d3` -> `1f 20 03 d5`)
+       - `0x10001ae38`: NOPed (`36 00 10 e0` -> `1f 20 03 d5`)
+       - `0x1001bf3b4`: replaced with `ldp x29, x30, [sp, #0x10]; ldp x20, x19, [sp], #0x20; ret` (clean stack unwind instead of abort)
+       - `0x1001bf6f8`: replaced with `ldp x29, x30, [sp, #0x10]; ldp x20, x19, [sp], #0x20; ret` (clean stack unwind instead of abort)
+
+- **LaunchServices (lsd t1) / usermanagerd Analysis:**
+  - Disassembled `0x1920f0c34` in `dyld_shared_cache_arm64`: inside `-[UMUserManager fetchPersonaSynchronous:WithError:]` (`UserManagement.framework`).
+  - Calls `_createUMServerSyncConnection` -> `synchronousRemoteObjectProxyWithErrorHandler:` -> `fetchPersona:forPid:completionHandler:` targeting `com.apple.mobile.usermanagerd.xpc`.
+  - In `launchd.plist`, `com.apple.mobile.usermanagerd` is active and advertises `com.apple.mobile.usermanagerd.xpc`.
+  - Full filesystem audit performed: eliminated all lingering host `1000:1000` ownerships across `/Applications`, `/Library`, `/System`, `/usr`, `/private/var/run`, and `/private/var/keybags` (all reset to `0:0`, preserving `501:501` for `mobile`). This resolves the `notify_register_check` status 8 error.
+
+- **Kernel Cmdline & 16-Character Process Names:**
+  - In XNU, `p_comm` is limited to 16 characters (`MAXCOMLEN = 16`). Updated `mkpayload.py` default cmdline:
+    `sweetnull=mobileactivation,lsd,usermanagerd,containermanager,backboardd,SpringBoard sweetscan=mobileactivation`.
+  - Removed `sweetsample` to allow uninterrupted execution.
+
+- **Artifacts Ready:**
+  - `shim/out/shim-boot.img` (SHA256: `33ecfd43beee6beb35877d6d0283a8f41eb3d61ba9cbd3883c49c61fa3ed014e`).
+  - `ios16-root.simg` (SHA256: `e87597eb595215e473fb93e0724a8cc6ad6c68d98aecb1848276a61a5d8a94ca`).
 
 ### >>> UPDATE 2026-10-23 milestone (topaz: mobileactivationd data_ark key fix, full permissions/ownership sweep, ios16-root.simg ready) <<<
 
