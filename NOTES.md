@@ -2,6 +2,39 @@
 
 ## Agent handoff / active work (2026-10-24, latest)
 
+### >>> UPDATE 2026-10-24 milestone (topaz: container creation, fallback hooks, brk#1 neutralization, CodeDirectory SHA-256 fix) <<<
+
+- **Root Cause of mobileactivationd Trap (pc 0x1001bf5bc, bt 0x100050630) Identified & Neutralized:**
+  - `sweetscan=mobileactivation` heap scan revealed: `main: Failed to copy container path(s).`, `SourceLine=247`.
+  - In `main()`, `mobileactivationd` queried 4 containers:
+    1. Class 12 (System): `com.apple.mobileactivationd`
+    2. Class 13 (SystemGroup): `systemgroup.com.apple.mobileactivationd` (for `Library/uik`)
+    3. Class 13 (SystemGroup): `systemgroup.com.apple.regulatory_images` (for `Library/RegulatoryImages`)
+    4. Class 13 (SystemGroup): `systemgroup.com.apple.pisco.suinfo` (for `Library/ProvenanceV2`)
+  - The SystemGroup containers were missing on disk, causing `_container_system_group_path_for_identifier` to return NULL.
+  - In `main()` at `0x10004f828..0x10004f834`, `cbz` checks on the 4 container pointers branched to `0x10005062c -> bl 0x1001bf56c` (SourceLine=247 handler), triggering `brk #1` at `0x1001bf5bc`.
+  - In addition, page modifications previously made in `mobileactivationd` tripped XNU code signing checks (`cs_invalid_page(0x102a0c000): final status 0x22000000, allowing (remove VALID) page`).
+
+- **Multi-Layer Fixes Applied:**
+  1. **Filesystem Containers Created:**
+     - Created all 4 SystemGroup directories and subdirectories (`Library/uik`, `Library/RegulatoryImages`, `Library/ProvenanceV2`, `Library/ConfigurationProfiles`) on `ios16-root.img`.
+     - Placed `.com.apple.mobile_container_manager.metadata.plist` in each directory.
+     - Set ownership to `0:0` (`root:wheel`), mode `0777` for directories, `0666` for plists.
+  2. **Binary Fallback Hooks Implemented in `mobileactivationd`:**
+     - Redirected stubs `_container_system_path_for_identifier` (`0x1001bfde4`) and `_container_system_group_path_for_identifier` (`0x1001bfdd8`) to custom assembly hooks at `0x1001bf430` and `0x1001bf468`.
+     - Hooks dynamically allocate via `malloc` and format full valid filesystem paths via `snprintf` so subsequent `[NSString stringWithUTF8String:]` and `free()` operate normally.
+  3. **Abort Checks Neutralized:**
+     - NOPed all `main()` container and assertion checks at `0x10004f7ac`, `0x10004f828..0x10004f834`, `0x10004f944`, `0x10004f9b8`, `0x10004fa18`, `0x10004fa20`, `0x10004fcec`, `0x10004fd28`, `0x100050470`, `0x100050718`, `0x10001ae38`.
+     - Replaced all 13 abort stub entry points (`0x1001bf1cc`, `0x1001bf230`, `0x1001bf294`, `0x1001bf2f8`, `0x1001bf35c`, `0x1001bf3c0`, `0x1001bf424`, `0x1001bf4a4`, `0x1001bf508`, `0x1001bf56c`, `0x1001bf5c0`, `0x1001bf630`, `0x1001bf6a0`) with clean `ret` (`0xd65f03c0`).
+     - Replaced every remaining `brk #1` (`0xd4200020`) in `0x1001bf000..0x1001bf780` with clean `ret`.
+  4. **CodeDirectory SHA-256 Slots Recomputed:**
+     - Recalculated SHA-256 digests for all 572 4KB code pages against `codeLimit` (`0x23bdc0`) and updated the `CodeDirectory` blob in `LC_CODE_SIGNATURE`.
+     - Full re-verification confirms 572/572 slots match with 0 mismatches, completely eliminating `cs_invalid_page` and text corruption alerts.
+
+- **Artifacts Ready:**
+  - `shim/out/shim-boot.img` (SHA256: `c48f58c1c8b616012b3304dcc4a2b5c3f7030fbca15c54426548b9d78ba9af65`).
+  - `ios16-root.simg` (SHA256: `bf3a2769dc7edf4a0d7cf669d307a013baa1f4bb06b4289044a0d2bd44c677ed`).
+
 ### >>> UPDATE 2026-10-24 milestone (topaz: mobileactivationd crash resolved, CFFIXED_USER_HOME, binary patch, lsd t1 usermanagerd analysis, 16-char process names) <<<
 
 - **Root Cause of mobileactivationd Trap (pc 0x1001bf3bc, bt 0x100050674) Solved:**

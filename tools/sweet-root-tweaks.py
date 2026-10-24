@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import glob
+import hashlib
 import os
 import plistlib
 import shutil
+import struct
 import subprocess
 import sys
 
@@ -188,6 +190,9 @@ def ensure_system_directories(root_directory):
 
     system_groups = [
         ('systemgroup.com.apple.configurationprofiles', ['Library/ConfigurationProfiles']),
+        ('systemgroup.com.apple.mobileactivationd', ['Library/uik']),
+        ('systemgroup.com.apple.regulatory_images', ['Library/RegulatoryImages']),
+        ('systemgroup.com.apple.pisco.suinfo', ['Library/ProvenanceV2']),
     ]
     sg_base = os.path.join(root_directory, 'private/var/containers/Shared/SystemGroup')
     for sg_id, subdirs in system_groups:
@@ -195,18 +200,18 @@ def ensure_system_directories(root_directory):
         os.makedirs(sg_dir, exist_ok=True)
         try:
             os.chown(sg_dir, 0, 0)
-            os.chmod(sg_dir, 0o755)
+            os.chmod(sg_dir, 0o777)
         except PermissionError:
             pass
         meta_plist = os.path.join(sg_dir, '.com.apple.mobile_container_manager.metadata.plist')
         if not os.path.exists(meta_plist):
-            write_plist(meta_plist, {'MCMMetadataIdentifier': sg_id}, 0, 0, 0o644, plistlib.FMT_XML)
+            write_plist(meta_plist, {'MCMMetadataIdentifier': sg_id}, 0, 0, 0o666, plistlib.FMT_XML)
         for s in subdirs:
             sp = os.path.join(sg_dir, s)
             os.makedirs(sp, exist_ok=True)
             try:
                 os.chown(sp, 0, 0)
-                os.chmod(sp, 0o755)
+                os.chmod(sp, 0o777)
             except PermissionError:
                 pass
 
@@ -278,15 +283,53 @@ def patch_mobileactivationd(root_directory):
     stat_info = os.stat(bin_path)
     with open(bin_path, 'rb') as f:
         data = bytearray(f.read())
-    patches = [
-        (0x50470, bytes.fromhex('1f2003d5')),
-        (0x50718, bytes.fromhex('1f2003d5')),
-        (0x1ae38, bytes.fromhex('1f2003d5')),
-        (0x1bf3b4, bytes.fromhex('fd7b41a9 f44fc2a8 c0035fd6')),
-        (0x1bf6f8, bytes.fromhex('fd7b41a9 f44fc2a8 c0035fd6')),
+    nop = bytes.fromhex('1f2003d5')
+    ret = bytes.fromhex('c0035fd6')
+    main_nops = [
+        0x1ae38, 0x4f7ac, 0x4f828, 0x4f82c, 0x4f830, 0x4f834,
+        0x4f944, 0x4f9b8, 0x4fa18, 0x4fa20, 0x4fcec, 0x4fd28,
+        0x50470, 0x50718
     ]
-    for off, patch_bytes in patches:
-        data[off:off+len(patch_bytes)] = patch_bytes
+    for off in main_nops:
+        data[off:off+4] = nop
+    data[0x1bfde4:0x1bfde8] = bytes.fromhex('93fdff17')
+    data[0x1bfdd8:0x1bfddc] = bytes.fromhex('a4fdff17')
+    for off in range(0x1bf424, 0x1bf56c, 4):
+        data[off:off+4] = nop
+    data[0x1bf424:0x1bf428] = ret
+    sys_path_code = bytes.fromhex(
+        'f44fbea9fd7b01a9fd43009100088052d8020094f30300aae00313aa01088052'
+        '0203001060030094e00313aafd7b41a9f44fc2a8c0035fd6'
+    )
+    data[0x1bf430:0x1bf430+len(sys_path_code)] = sys_path_code
+    sys_group_code = bytes.fromhex(
+        'f44fbea9fd7b01a9fd430091f40301aa00108052c9020094f30300aae00313aa'
+        '0110805222040010e30314aa50030094e00313aafd7b41a9f44fc2a8c0035fd6'
+    )
+    data[0x1bf468:0x1bf468+len(sys_group_code)] = sys_group_code
+    str_sys = b'/private/var/containers/Data/System/com.apple.mobileactivationd\0'
+    data[0x1bf4b0:0x1bf4b0+len(str_sys)] = str_sys
+    str_grp = b'/private/var/containers/Shared/SystemGroup/%s\0'
+    data[0x1bf510:0x1bf510+len(str_grp)] = str_grp
+    abort_entries = [
+        0x1bf1cc, 0x1bf230, 0x1bf294, 0x1bf2f8, 0x1bf35c, 0x1bf3c0,
+        0x1bf424, 0x1bf4a4, 0x1bf508, 0x1bf56c, 0x1bf5c0, 0x1bf630, 0x1bf6a0
+    ]
+    for off in abort_entries:
+        data[off:off+4] = ret
+    for off in range(0x1bf000, 0x1bf780, 4):
+        w = struct.unpack('<I', data[off:off+4])[0]
+        if w == 0xd4200020:
+            data[off:off+4] = ret
+    cs_off = 0x23bdc0
+    cd_off = cs_off + 0x34
+    magic, length, version, flags, hashOffset, identOffset, nSpecialSlots, nCodeSlots, codeLimit, hashSize, hashType, platform, pageSize, spare2 = struct.unpack('>IIIIIIIIIBBBBI', data[cd_off:cd_off+44])
+    for i in range(nCodeSlots):
+        p_start = i * 4096
+        p_end = min((i + 1) * 4096, codeLimit)
+        digest = hashlib.sha256(data[p_start:p_end]).digest()
+        slot_off = cd_off + hashOffset + i * hashSize
+        data[slot_off:slot_off+hashSize] = digest
     with open(bin_path, 'wb') as f:
         f.write(data)
     try:
@@ -294,7 +337,7 @@ def patch_mobileactivationd(root_directory):
         os.chmod(bin_path, stat_info.st_mode)
     except PermissionError:
         pass
-    print('mobileactivationd binary patched')
+    print('mobileactivationd binary patched and signed')
 
 def configure_audio_stack(root_directory):
     virtual_audio_path = os.path.join(root_directory, 'Library/Audio/Plug-Ins/HAL/VirtualAudio.plugin')
