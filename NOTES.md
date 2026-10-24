@@ -2,7 +2,32 @@
 
 ## Agent handoff / active work (2026-10-24, latest)
 
-### >>> UPDATE 2026-10-24 milestone (topaz: mobileactivationd direct redirection fix, launchd shell daemon registration, 16 MB delta ready) <<<
+### >>> UPDATE 2026-10-24 milestone (topaz: userdata partition resolution /dev/block/by-name/userdata, verified delta push, automated flash & boot) <<<
+
+- **Critical Hardware Fact: Target Partition Resolution for topaz / sweet UFS:**
+  - On Snapdragon 685 (SM6225 / UFS), the `userdata` partition resides on LUN0 (`sda34`), accessible via symlink `/dev/block/by-name/userdata` (or `/dev/block/bootdevice/by-name/userdata`), NOT `/dev/block/sda19`.
+  - The previous delta push wrote dirty blocks to `sda19`, leaving the physical `userdata` partition untouched on flash, which is why `mobileactivationd` continued crashing with the unpatched binary.
+  - Updated `tools/sweet-delta-push.py`:
+    - `DEFAULT_PARTITION = '/dev/block/by-name/userdata'` with dynamic resolution via `readlink -f`.
+    - Integrated bit-for-bit read-back verification (`verify_blocks_adb`) which reads back written chunks from flash and compares CRC32 with local `ios16-root.img`.
+    - Added `push-known` command and `--force-known` flag for the 16 dirty chunks (14 ranges).
+  - Created `tools/sweet-flash-and-boot.py`:
+    - Automatically waits for device in OrangeFox Recovery via ADB.
+    - Flashes delta blocks to `/dev/block/by-name/userdata` in ~0.25 seconds.
+    - Verifies all chunks bit-for-bit on device flash.
+    - Automatically executes `adb reboot bootloader` and `fastboot boot shim/out/shim-boot.img`.
+
+- **Complete Re-Verification of Filesystem & Binaries in `ios16-root.img`:**
+  - `mobileactivationd`:
+    - `1000342c8: 17ffffd4 b 0x100034218` followed by 28 `nop`s.
+    - `0x10004f828 -> 0x1001bf570`: `fix_objects` trampoline (`cmp; csel` falling back to `x26`).
+    - CodeDirectory: all 572/572 slots match with 0 mismatches.
+  - `topaz-shell`:
+    - Ad-hoc signed Mach-O static executable (16,635 bytes), 4/4 CodeDirectory slots match.
+    - Installed at `/usr/libexec/topaz-shell` and `/usr/local/bin/topaz-shell` (0755, root:wheel).
+    - Registered in `launchd.plist` (`com.topaz.shell`, `UserName: root`, `RunAtLoad: true`, `KeepAlive: true`).
+  - `data_ark.plist`:
+    - Verified at `/private/var/containers/Data/System/com.apple.mobileactivationd/Library/internal/data_ark.plist` with `ActivationState: Activated`.
 
 - **Root Cause of `CRASH mobileactivation sig 11 pc 0x193ce3764 far 0x20 bt 0x100...4f7e0` Permanently Solved:**
   - `0x1000342c8` was called repeatedly in `main()` and inside `dispatch_once` blocks whenever system group container paths were requested.

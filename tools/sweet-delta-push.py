@@ -11,9 +11,26 @@ import argparse
 CHUNK_MAGIC = b'CHKS'
 CHUNK_VERSION = 1
 DEFAULT_CHUNK_SIZE = 1048576
-DEFAULT_PARTITION = '/dev/block/sda19'
+DEFAULT_PARTITION = '/dev/block/by-name/userdata'
 DEFAULT_HOST = '192.168.7.2'
 DEFAULT_PORT = 1337
+
+KNOWN_DIRTY_RANGES = [
+    (0, 1),
+    (721, 1),
+    (723, 1),
+    (872, 1),
+    (878, 1),
+    (6882, 1),
+    (6886, 1),
+    (6888, 2),
+    (6893, 1),
+    (7682, 2),
+    (8303, 1),
+    (8305, 1),
+    (12675, 1),
+    (13172, 1),
+]
 
 def compute_chunk_hashes(image_path, chunk_size=DEFAULT_CHUNK_SIZE):
     size = os.path.getsize(image_path)
@@ -90,6 +107,40 @@ def find_dirty_ranges(image_path, baseline_hashes, chunk_size):
         ranges.append((start, count))
     return ranges, dirty_indices, current_hashes
 
+def resolve_partition(adb_cmd, partition):
+    if partition and partition not in ['/dev/block/sda19', '/dev/block/by-name/userdata', 'auto']:
+        return partition
+    for cand in ['/dev/block/by-name/userdata', '/dev/block/bootdevice/by-name/userdata']:
+        try:
+            out = subprocess.check_output(adb_cmd + ['shell', f'[ -b {cand} ] && readlink -f {cand} || true']).decode().strip()
+            if out and out.startswith('/dev/block/'):
+                return out
+        except Exception:
+            pass
+    return partition or '/dev/block/by-name/userdata'
+
+def verify_blocks_adb(image_path, dirty_ranges, chunk_size, partition, serial=None):
+    adb_cmd = ['adb']
+    if serial:
+        adb_cmd += ['-s', serial]
+    partition = resolve_partition(adb_cmd, partition)
+    verified = 0
+    with open(image_path, 'rb') as f:
+        for start_chunk, count in dirty_ranges:
+            for c in range(start_chunk, start_chunk + count):
+                f.seek(c * chunk_size)
+                expected_data = f.read(chunk_size)
+                expected_crc = zlib.crc32(expected_data)
+                cmd = adb_cmd + ['exec-out', f'dd if={partition} bs={chunk_size} skip={c} count=1 status=none']
+                dev_data = subprocess.check_output(cmd)
+                actual_crc = zlib.crc32(dev_data)
+                if actual_crc != expected_crc:
+                    print(f'Verification MISMATCH at chunk {c}: expected {expected_crc:08x}, got {actual_crc:08x}')
+                    return False
+                verified += 1
+    print(f'Verification passed: {verified} chunks ({verified * chunk_size / (1024*1024):.2f} MB) match bit-for-bit on {partition}')
+    return True
+
 def push_block_delta_adb(image_path, dirty_ranges, chunk_size, partition=DEFAULT_PARTITION, serial=None):
     adb_cmd = ['adb']
     if serial:
@@ -103,6 +154,7 @@ def push_block_delta_adb(image_path, dirty_ranges, chunk_size, partition=DEFAULT
     if not lines:
         print('Error: no device detected via adb.')
         return False
+    partition = resolve_partition(adb_cmd, partition)
     total_chunks = sum(count for _, count in dirty_ranges)
     total_bytes = total_chunks * chunk_size
     print(f'Pushing delta: {len(dirty_ranges)} contiguous range(s), {total_chunks} chunks ({total_bytes / (1024*1024):.2f} MB) -> {partition}')
@@ -131,6 +183,7 @@ def push_block_delta_adb(image_path, dirty_ranges, chunk_size, partition=DEFAULT
     t1 = time.time()
     dt = max(0.001, t1 - t0)
     print(f'Delta push successfully finished in {dt:.2f}s ({total_bytes / (1024*1024*dt):.2f} MB/s)')
+    verify_blocks_adb(image_path, dirty_ranges, chunk_size, partition, serial)
     return True
 
 class TopazShellClient:
@@ -223,10 +276,11 @@ class TopazShellClient:
 
 def main():
     parser = argparse.ArgumentParser(description='Sweet & Topaz Instant Delta-Push / Live-Push Tool')
-    parser.add_argument('action', nargs='?', default='auto', choices=['auto', 'init', 'diff', 'push', 'put', 'mkdir', 'rm', 'kill', 'cmd', 'ps', 'dmesg'])
+    parser.add_argument('action', nargs='?', default='auto', choices=['auto', 'init', 'diff', 'push', 'push-known', 'verify', 'put', 'mkdir', 'rm', 'kill', 'cmd', 'ps', 'dmesg'])
     parser.add_argument('--image', default='ios16-root.img')
     parser.add_argument('--chunks', default='ios16-root.chunks')
     parser.add_argument('--partition', default=DEFAULT_PARTITION)
+    parser.add_argument('--force-known', action='store_true')
     parser.add_argument('--host', default=DEFAULT_HOST)
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
     parser.add_argument('--serial', default=None)
@@ -243,6 +297,16 @@ def main():
         hashes, chunk_size, total_size = compute_chunk_hashes(args.image)
         save_chunks_file(args.chunks, hashes, chunk_size, total_size)
         print(f'Baseline saved to {args.chunks} ({len(hashes)} chunks, {total_size / (1024**3):.2f} GB)')
+        return
+
+    if args.action == 'verify':
+        ranges = KNOWN_DIRTY_RANGES
+        verify_blocks_adb(args.image, ranges, DEFAULT_CHUNK_SIZE, args.partition, args.serial)
+        return
+
+    if args.action == 'push-known' or getattr(args, 'force_known', False):
+        ranges = KNOWN_DIRTY_RANGES
+        push_block_delta_adb(args.image, ranges, DEFAULT_CHUNK_SIZE, args.partition, args.serial)
         return
 
     if args.action in ['diff', 'push', 'auto']:
