@@ -159,32 +159,28 @@ def push_block_delta_adb(image_path, dirty_ranges, chunk_size, partition=DEFAULT
     total_bytes = total_chunks * chunk_size
     print(f'Pushing delta: {len(dirty_ranges)} contiguous range(s), {total_chunks} chunks ({total_bytes / (1024*1024):.2f} MB) -> {partition}')
     t0 = time.time()
+    temp_local = '/tmp/_delta_range.bin'
+    temp_dev = '/tmp/_delta_range.bin'
     with open(image_path, 'rb') as f:
         for range_idx, (start_chunk, count) in enumerate(dirty_ranges):
             offset = start_chunk * chunk_size
             length = count * chunk_size
             f.seek(offset)
             data = f.read(length)
-            cmd = f'dd of={partition} bs={chunk_size} seek={start_chunk} count={count} conv=notrunc status=none'
-            p = subprocess.Popen(adb_cmd + ['exec-in', cmd], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            _, err = p.communicate(data)
-            if p.returncode != 0:
-                temp_local = '/tmp/_delta_chunk.bin'
-                temp_dev = '/tmp/_delta_chunk.bin'
-                with open(temp_local, 'wb') as tf:
-                    tf.write(data)
-                subprocess.check_call(adb_cmd + ['push', temp_local, temp_dev])
-                dd_cmd = f'dd if={temp_dev} of={partition} bs={chunk_size} seek={start_chunk} count={count} conv=notrunc status=none && rm -f {temp_dev}'
-                subprocess.check_call(adb_cmd + ['shell', dd_cmd])
-                if os.path.exists(temp_local):
-                    os.remove(temp_local)
+            with open(temp_local, 'wb') as tf:
+                tf.write(data)
+            subprocess.check_call(adb_cmd + ['push', temp_local, temp_dev], stdout=subprocess.DEVNULL)
+            dd_cmd = f'dd if={temp_dev} of={partition} bs={chunk_size} seek={start_chunk} count={count} conv=notrunc,fsync status=none && rm -f {temp_dev}'
+            subprocess.check_call(adb_cmd + ['shell', dd_cmd])
+            if os.path.exists(temp_local):
+                os.remove(temp_local)
             print(f'[{range_idx+1}/{len(dirty_ranges)}] Seek {start_chunk} Count {count} ({length / (1024*1024):.2f} MB) OK')
     subprocess.check_call(adb_cmd + ['shell', 'sync'])
     t1 = time.time()
     dt = max(0.001, t1 - t0)
     print(f'Delta push successfully finished in {dt:.2f}s ({total_bytes / (1024*1024*dt):.2f} MB/s)')
-    verify_blocks_adb(image_path, dirty_ranges, chunk_size, partition, serial)
-    return True
+    ok = verify_blocks_adb(image_path, dirty_ranges, chunk_size, partition, serial)
+    return ok
 
 class TopazShellClient:
     def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=10.0):
@@ -301,12 +297,16 @@ def main():
 
     if args.action == 'verify':
         ranges = KNOWN_DIRTY_RANGES
-        verify_blocks_adb(args.image, ranges, DEFAULT_CHUNK_SIZE, args.partition, args.serial)
+        ok = verify_blocks_adb(args.image, ranges, DEFAULT_CHUNK_SIZE, args.partition, args.serial)
+        if not ok:
+            sys.exit(1)
         return
 
     if args.action == 'push-known' or getattr(args, 'force_known', False):
         ranges = KNOWN_DIRTY_RANGES
-        push_block_delta_adb(args.image, ranges, DEFAULT_CHUNK_SIZE, args.partition, args.serial)
+        ok = push_block_delta_adb(args.image, ranges, DEFAULT_CHUNK_SIZE, args.partition, args.serial)
+        if not ok:
+            sys.exit(1)
         return
 
     if args.action in ['diff', 'push', 'auto']:
