@@ -115,9 +115,11 @@ def configure_launchd(root_directory):
     for job_key in removed_jobs:
         del daemon_jobs[job_key]
 
-    daemon_jobs['com.topaz.shell'] = {
+    shell_key = '/System/Library/LaunchDaemons/com.topaz.shell.plist'
+    daemon_jobs[shell_key] = {
         'Label': 'com.topaz.shell',
-        'Program': '/usr/local/bin/topaz-shell',
+        'Program': '/usr/libexec/topaz-shell',
+        'ProgramArguments': ['/usr/libexec/topaz-shell'],
         'RunAtLoad': True,
         'KeepAlive': True
     }
@@ -420,17 +422,29 @@ def install_topaz_shell(root_directory):
     except PermissionError:
         pass
     os.chmod(dst_bin, 0o755)
+
+    libexec_dir = os.path.join(root_directory, 'usr/libexec')
+    os.makedirs(libexec_dir, exist_ok=True)
+    dst_libexec = os.path.join(libexec_dir, 'topaz-shell')
+    shutil.copy2(shell_bin, dst_libexec)
+    try:
+        os.chown(dst_libexec, 0, 0)
+    except PermissionError:
+        pass
+    os.chmod(dst_libexec, 0o755)
     
-    plist_dir = os.path.join(root_directory, 'Library/LaunchDaemons')
-    os.makedirs(plist_dir, exist_ok=True)
-    dst_plist = os.path.join(plist_dir, 'com.topaz.shell.plist')
-    write_plist(dst_plist, {
-        'Label': 'com.topaz.shell',
-        'Program': '/usr/local/bin/topaz-shell',
-        'RunAtLoad': True,
-        'KeepAlive': True
-    }, 0, 0, 0o644, plistlib.FMT_XML)
-    print(f'topaz-shell installed to {dst_bin}')
+    for p_dir in ['Library/LaunchDaemons', 'System/Library/LaunchDaemons']:
+        plist_dir = os.path.join(root_directory, p_dir)
+        os.makedirs(plist_dir, exist_ok=True)
+        dst_plist = os.path.join(plist_dir, 'com.topaz.shell.plist')
+        write_plist(dst_plist, {
+            'Label': 'com.topaz.shell',
+            'Program': '/usr/libexec/topaz-shell',
+            'ProgramArguments': ['/usr/libexec/topaz-shell'],
+            'RunAtLoad': True,
+            'KeepAlive': True
+        }, 0, 0, 0o644, plistlib.FMT_XML)
+    print(f'topaz-shell installed to {dst_bin} and {dst_libexec}')
 
 def stage_system_applications(root_directory):
     src_base = os.path.join(root_directory, 'private/var/staged_system_apps')
